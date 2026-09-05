@@ -6,6 +6,11 @@ license = "MIT"
 description = "Maximum inscribed circle solvers extracted from IGE: fast paths, grid solver, Voronoi exact via spade, optional GEOS fallback"
 repository = "https://github.com/GIS-Inscribed-Geometry/IGE"
 
+[lib]
+name = "max_inscribed_circle"
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
 [dependencies]
 geo = "0.33.1"
 geo-types = "0.7.19"
@@ -13,9 +18,15 @@ thiserror = "2"
 rayon = "1.12"
 rustc-hash = "2.1.3"
 spade = "2.15.1"
+libc = "0.2"
 geos = { version = "11.1.1", features = ["v3_9_0"], optional = true }
+pyo3 = { version = "0.29", optional = true }
+geo-traits = { version = "0.3", optional = true }
 
 [features]
 default = []
 geos = ["dep:geos"]
 shewchuk = []
+python = ["dep:pyo3"]
+extension-module = ["pyo3/extension-module"]
+geo-traits = ["dep:geo-traits"]
