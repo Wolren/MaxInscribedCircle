@@ -1,15 +1,27 @@
-//! Grid solver: samples interior cell centers and refines the best one.
+//! Grid solver: tiles the bounding box with cells and refines the best one.
+//!
+//! The search is a branch and bound on one invariant: the distance to the
+//! boundary is 1-Lipschitz, so for a cell of half-size `h` centred at `c`, no
+//! point of that cell can be farther from the boundary than
+//! `boundary_distance(c) + h * sqrt(2)`. That bound holds for every centre,
+//! inside the polygon or not, which is what makes the pruning sound for cells
+//! that straddle an edge. A cell leaves the queue only when its bound proves it
+//! cannot beat the incumbent by more than the tolerance, so the queue drains
+//! exactly when no region left in play can improve the answer. Nothing else
+//! ends the search: there is no iteration budget, because a counter that stops
+//! the loop early turns an unfinished search into an answer that looks
+//! finished.
 use std::collections::BinaryHeap;
 
 use super::super::index::{NearestBoundaryIndex, PipIndex};
 use super::super::input::HostPolygon;
 use super::super::{MicApproach, MicResult, MicUsedEngine};
+use crate::tuning;
 use geo_types::Point;
 
 const SQRT2: f64 = std::f64::consts::SQRT_2;
 
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 struct GridCell {
     x: f64,
     y: f64,
@@ -40,202 +52,173 @@ impl Ord for GridCell {
     }
 }
 
+/// Unsigned distance from a point to the nearest segment of the polygon.
+///
+/// This is the distance to the boundary as a set, so it is 1-Lipschitz
+/// everywhere and bounds the clearance of every point of a cell around it,
+/// whichever side of the polygon the queried point falls on.
+#[inline]
+fn boundary_distance(nb: &NearestBoundaryIndex, x: f64, y: f64) -> f64 {
+    match nb.nearest_distance_sq(x, y) {
+        Some((d, _)) if d.is_finite() && d > 0.0 => d.sqrt(),
+        _ => 0.0,
+    }
+}
+
+/// True when a cell of half-size `half` centred outside the polygon at `d`
+/// from the boundary can hold no interior point.
+///
+/// If it held one, the segment from the inside point to the outside centre
+/// would cross the boundary, and that crossing lies inside the cell, so the
+/// centre would be at most `half * sqrt(2)` from the boundary. Finding the
+/// centre farther away than that therefore proves the cell is empty of
+/// interior points, and dropping it costs nothing.
+#[inline]
+fn empty_of_interior(inside: bool, d: f64, half: f64) -> bool {
+    !inside && d > half * SQRT2
+}
+
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
-/// Sample interior cell centers on a uniform grid and refine the best circle.
+/// Tile the bounding box and refine the best cell into the inscribed circle.
+///
+/// The first level tiles the whole box, so every point of the polygon starts
+/// inside some queued cell. Children wholly outside the box are dropped, which
+/// is safe because a polygon is contained in its own bounding box. The radius
+/// of the returned result is measured against the segment table at the returned
+/// centre rather than read off the cell bound, so the reported circle always
+/// fits inside the polygon.
 pub fn solve_grid(
     host: &HostPolygon,
     pip: &PipIndex,
     nb: &NearestBoundaryIndex,
     tolerance: f64,
 ) -> Option<MicResult> {
-    let bounds = host.bounds()?;
-    let (min_x, min_y, max_x, max_y) = bounds;
-
+    let (min_x, min_y, max_x, max_y) = host.bounds()?;
     let width = max_x - min_x;
     let height = max_y - min_y;
     let cell_size = width.max(height);
 
-    if cell_size == 0.0 {
+    if !(cell_size > 0.0) || !tolerance.is_finite() || tolerance <= 0.0 {
         return None;
     }
 
-    let grid_side = 25;
-    let h_size = cell_size / (grid_side as f64);
+    // Half-size of a first-level cell: the box is covered by at most GRID_SIDE
+    // cells along its longer axis and by however many are needed along the
+    // shorter one, so a thin polygon is still covered end to end.
+    let h_size = cell_size / (2.0 * tuning::MIC_GRID_SIDE as f64);
+    let step = 2.0 * h_size;
+    let cells_x = ((width / step).ceil() as usize).max(1);
+    let cells_y = ((height / step).ceil() as usize).max(1);
 
-    // Pre-allocate priority queue with estimated capacity to reduce reallocations
-    let initial_cell_count = grid_side * grid_side;
-    let mut queue: BinaryHeap<GridCell> = BinaryHeap::with_capacity(initial_cell_count * 2);
+    let mut queue: BinaryHeap<GridCell> = BinaryHeap::with_capacity(cells_x * cells_y * 2);
+    let mut best_x = 0.0;
+    let mut best_y = 0.0;
+    let mut best_dist = 0.0;
+    let mut found = false;
 
-    // Precompute base offsets to reduce arithmetic in inner loop
-    let base_x = min_x + 0.5 * h_size;
-    let base_y = min_y + 0.5 * h_size;
-
-    for i in 0..grid_side {
-        let cx_base = base_x + i as f64 * h_size;
-        for j in 0..grid_side {
-            let cx = cx_base;
-            let cy = base_y + j as f64 * h_size;
-
-            // Fast overall bbox reject: point outside polygon's AABB cannot be inside
-            if cx > max_x || cy > max_y {
+    for i in 0..cells_x {
+        let cx = min_x + h_size + i as f64 * step;
+        for j in 0..cells_y {
+            let cy = min_y + h_size + j as f64 * step;
+            let d = boundary_distance(nb, cx, cy);
+            let inside = pip.contains_strict_xy(cx, cy);
+            if empty_of_interior(inside, d, h_size) {
                 continue;
             }
-
-            // PIP check - skips most cells
-            if !pip.contains_strict_xy(cx, cy) {
-                continue;
+            if inside && d > best_dist {
+                best_x = cx;
+                best_y = cy;
+                best_dist = d;
+                found = true;
             }
-
-            // Nearest boundary distance
-            let Some((dist_sq, _)) = nb.nearest_distance_sq(cx, cy) else {
-                continue;
-            };
-            if !dist_sq.is_finite() || dist_sq <= 0.0 {
-                continue;
-            }
-
-            let distance = dist_sq.sqrt();
-            let max_dist = distance + h_size * SQRT2;
-
             queue.push(GridCell {
                 x: cx,
                 y: cy,
                 h_size,
-                distance,
+                distance: if inside { d } else { 0.0 },
+                max_dist: d + h_size * SQRT2,
+            });
+        }
+    }
+
+    if !found {
+        return None;
+    }
+
+    let mut iterations = 0usize;
+
+    while let Some(cell) = queue.pop() {
+        iterations += 1;
+
+        // The heap is ordered by the bound, so once the best remaining cell
+        // cannot beat the incumbent by more than the tolerance, no cell can.
+        let radius_bound = best_dist + tolerance;
+        if cell.max_dist <= radius_bound {
+            break;
+        }
+
+        let half = cell.h_size * 0.5;
+        let children = [
+            (cell.x - half, cell.y - half),
+            (cell.x + half, cell.y - half),
+            (cell.x - half, cell.y + half),
+            (cell.x + half, cell.y + half),
+        ];
+
+        for (cx, cy) in children {
+            // A cell that lies wholly outside the box holds no polygon point.
+            if cx + half < min_x || cx - half > max_x || cy + half < min_y || cy - half > max_y {
+                continue;
+            }
+            let d = boundary_distance(nb, cx, cy);
+            let max_dist = d + half * SQRT2;
+            // The bound test needs no containment result, so it runs first and
+            // most cells never pay for one.
+            if max_dist <= radius_bound {
+                continue;
+            }
+            let inside = pip.contains_strict_xy(cx, cy);
+            if empty_of_interior(inside, d, half) {
+                continue;
+            }
+            if inside && d > best_dist {
+                best_x = cx;
+                best_y = cy;
+                best_dist = d;
+            }
+            queue.push(GridCell {
+                x: cx,
+                y: cy,
+                h_size: half,
+                distance: if inside { d } else { 0.0 },
                 max_dist,
             });
         }
     }
 
-    if queue.is_empty() {
+    // Measure, do not trust: the radius handed to the caller is the true
+    // distance to the nearest segment of this polygon at this centre.
+    let segments = nb.segments();
+    let radius_sq = segments.batch_point_segment_distance_sq(best_x, best_y, 0, segments.len());
+    if !radius_sq.is_finite() {
         return None;
     }
+    let radius_sq = radius_sq.max(0.0);
+    let radius = radius_sq.sqrt();
 
-    let mut farthest_x = 0.0;
-    let mut farthest_y = 0.0;
-    let mut farthest_dist = 0.0;
-    let mut farthest_dist_sq = 0.0;
-    let mut found_initial = false;
-
-    let max_iterations = compute_max_iterations(host, tolerance);
-    let mut iterations = 0;
-
-    while let Some(cell) = queue.pop() {
-        iterations += 1;
-        if iterations > max_iterations {
-            break;
-        }
-
-        if found_initial && cell.max_dist <= farthest_dist {
-            break;
-        }
-
-        if !pip.contains_strict_xy(cell.x, cell.y) {
-            continue;
-        }
-
-        let Some((dist_sq, _)) = nb.nearest_distance_sq(cell.x, cell.y) else {
-            continue;
-        };
-
-        if !dist_sq.is_finite() || dist_sq <= 0.0 {
-            continue;
-        }
-
-        let dist = dist_sq.sqrt();
-
-        // Update farthest cell if this one is better
-        if !found_initial || dist > farthest_dist {
-            farthest_x = cell.x;
-            farthest_y = cell.y;
-            farthest_dist = dist;
-            farthest_dist_sq = dist_sq;
-            found_initial = true;
-        }
-
-        if cell.h_size > tolerance {
-            let half_h = cell.h_size * 0.5;
-            // Split into 4 sub-cells, the same refinement step GEOS uses
-            let sub_cells = [
-                (cell.x - half_h, cell.y - half_h),
-                (cell.x + half_h, cell.y - half_h),
-                (cell.x - half_h, cell.y + half_h),
-                (cell.x + half_h, cell.y + half_h),
-            ];
-
-            for (nx, ny) in sub_cells {
-                // Quick overall bbox reject - avoids PIP for clearly exterior points
-                if nx < min_x || nx > max_x || ny < min_y || ny > max_y {
-                    continue;
-                }
-                // PIP check
-                if !pip.contains_strict_xy(nx, ny) {
-                    continue;
-                }
-                // Nearest boundary distance
-                let Some((dist_sq, _)) = nb.nearest_distance_sq(nx, ny) else {
-                    continue;
-                };
-                if !dist_sq.is_finite() || dist_sq <= 0.0 {
-                    continue;
-                }
-                let distance = dist_sq.sqrt();
-                let max_dist = distance + half_h * SQRT2;
-                // Only push if it could potentially improve current best
-                if max_dist > farthest_dist + tolerance {
-                    queue.push(GridCell {
-                        x: nx,
-                        y: ny,
-                        h_size: half_h,
-                        distance,
-                        max_dist,
-                    });
-                }
-            }
-        }
-    }
-
-    if !found_initial {
-        return None;
-    }
-
-    let support_segments = nb.supporting_segments(
-        farthest_x,
-        farthest_y,
-        farthest_dist_sq,
-        farthest_dist_sq.max(1.0) * 1e-10,
-    );
+    let support_segments =
+        nb.supporting_segments(best_x, best_y, radius_sq, radius_sq.max(1.0) * 1e-10);
 
     Some(MicResult {
-        center: Point::new(farthest_x, farthest_y),
-        radius: farthest_dist,
-        radius_sq: farthest_dist_sq,
+        center: Point::new(best_x, best_y),
+        radius,
+        radius_sq,
         support_segments,
         candidate_count: iterations,
         used_engine: MicUsedEngine::Grid,
         approach: MicApproach::GridSolver,
         component_index: None,
     })
-}
-fn compute_max_iterations(host: &HostPolygon, tolerance: f64) -> usize {
-    let Some(bounds) = host.bounds() else {
-        return 10000;
-    };
-    let (min_x, min_y, max_x, max_y) = bounds;
-    let width = max_x - min_x;
-    let height = max_y - min_y;
-    let area = width * height;
-
-    let tolerance_sq = tolerance * tolerance;
-    if tolerance_sq <= 0.0 {
-        return 10000;
-    }
-
-    let cell_area = tolerance_sq;
-    let cell_count = (area / cell_area).ceil() as usize;
-
-    let safety_factor = 10;
-    (cell_count * safety_factor).min(100000).max(100)
 }
 
 #[cfg_attr(feature = "hotpath", hotpath::measure)]

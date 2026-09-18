@@ -26,3 +26,10 @@ pub const MIC_EXT_SS_SEG_CAP: usize = 64;
 pub const MIC_EXT_SS_VERT_CAP: usize = 32;
 /// Per-ring segment budget of the extended tier, ignored by the sampler.
 pub const MIC_EXT_SEGS_PER_RING: usize = 5;
+/// Half of the first-level cell count of the grid solver: the bounding box is
+/// covered by at most this many cells along its longer axis.
+pub const MIC_GRID_SIDE: usize = 25;
+/// Relative gap above which a fast-path radius counts as unverified. A radius
+/// the segment table does not confirm to this accuracy means the polygon is not
+/// the class the fast path assumed, so the general path has to answer instead.
+pub const MIC_FAST_PATH_REL_TOL: f64 = 1e-9;
