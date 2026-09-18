@@ -35,6 +35,8 @@ use max_inscribed_circle::mic::grid_tolerance;
 use max_inscribed_circle::mic::index::NearestBoundaryIndex;
 use max_inscribed_circle::mic::input::{HostPolygon, SegmentIndex};
 use max_inscribed_circle::mic::solver::bench_geos::solve_mic_geos_with_tolerance;
+use max_inscribed_circle::mic::solver::exact::solve_exact;
+use max_inscribed_circle::mic::workspace::MicWorkspace;
 use max_inscribed_circle::mic::{maximum_inscribed_circle, MicOptions, MicResult};
 
 const DEFAULT_WKT_DIRS: [&str; 2] = [
@@ -95,6 +97,10 @@ struct Outcome {
     candidates_native: usize,
     candidates_geos: usize,
     unclosed_rings: usize,
+    us_exact: f64,
+    exact: Option<MicResult>,
+    clearance_exact: f64,
+    candidates_exact: usize,
     us_native: f64,
     us_geos: f64,
     exact_radius: Option<f64>,
@@ -485,11 +491,16 @@ struct Measurements {
     us_geos: f64,
     inside_native: bool,
     inside_geos: bool,
+    us_exact: f64,
+    exact: Option<MicResult>,
+    clearance_exact: f64,
+    candidates_exact: usize,
 }
 
 fn measure(poly: &Polygon<f64>, host: &HostPolygon) -> Measurements {
     let options = MicOptions::default();
     let tolerance = grid_tolerance(host);
+    let mut us_exact = 0.0f64;
 
     let native_start = Instant::now();
     let native = maximum_inscribed_circle(poly, &options);
@@ -498,6 +509,23 @@ fn measure(poly: &Polygon<f64>, host: &HostPolygon) -> Measurements {
     let geos_start = Instant::now();
     let geos = solve_mic_geos_with_tolerance(host, tolerance);
     let us_geos = geos_start.elapsed().as_secs_f64() * 1e6;
+
+    // The exact candidate stage on its own, so its cost and its distance
+    // from the answer the pipeline returns are both on the record.
+    let exact = match MicWorkspace::new(host.clone(), false) {
+        Ok(mut ws) => {
+            let t = Instant::now();
+            let r = solve_exact(&mut ws, &options).ok();
+            us_exact = t.elapsed().as_secs_f64() * 1e6;
+            r
+        }
+        Err(_) => None,
+    };
+    let clearance_exact = exact
+        .as_ref()
+        .map(|r| clearance_brute(poly, r.center.x(), r.center.y()))
+        .unwrap_or(0.0);
+    let candidates_exact = exact.as_ref().map(|r| r.candidate_count).unwrap_or(0);
 
     let clearance = |r: Option<&MicResult>| match r {
         Some(res) => clearance_brute(poly, res.center.x(), res.center.y()),
@@ -528,6 +556,10 @@ fn measure(poly: &Polygon<f64>, host: &HostPolygon) -> Measurements {
         us_geos,
         inside_native,
         inside_geos,
+        us_exact,
+        exact,
+        clearance_exact,
+        candidates_exact,
     }
 }
 
@@ -651,6 +683,10 @@ fn main() {
                     unclosed_rings: 0,
                     us_native: 0.0,
                     us_geos: 0.0,
+                    us_exact: 0.0,
+                    exact: None,
+                    clearance_exact: 0.0,
+                    candidates_exact: 0,
                     exact_radius: case.exact_radius,
                 });
                 continue;
@@ -733,6 +769,10 @@ fn main() {
             unclosed_rings,
             us_native: m.us_native,
             us_geos: m.us_geos,
+            us_exact: m.us_exact,
+            exact: m.exact,
+            clearance_exact: m.clearance_exact,
+            candidates_exact: m.candidates_exact,
             exact_radius: case.exact_radius,
         });
     }
@@ -939,7 +979,7 @@ fn main() {
     // ---- csv ----
     let out_path = PathBuf::from("target/parity_geos_report.csv");
     let mut csv = String::from(
-        "name,kind,verts,radius_native,radius_geos,rel_gap,clearance_native,clearance_geos,floor,inside_native,inside_geos,us_native,us_geos,native_err,geos_err,engine_native,approach_native,engine_geos,candidates_native,candidates_geos\n",
+        "name,kind,verts,radius_native,radius_geos,rel_gap,clearance_native,clearance_geos,floor,inside_native,inside_geos,us_native,us_geos,native_err,geos_err,engine_native,approach_native,engine_geos,candidates_native,candidates_geos,radius_exact,us_exact,candidates_exact,clearance_exact\n",
     );
     for o in &outcomes {
         let rn = o.native.as_ref().map(|r| r.radius);
@@ -949,7 +989,7 @@ fn main() {
             _ => f64::NAN,
         };
         csv.push_str(&format!(
-            "{},{},{},{},{},{:.6e},{:.9e},{:.9e},{},{},{},{:.1},{:.1},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{:.6e},{:.9e},{:.9e},{},{},{},{:.1},{:.1},{},{},{},{},{},{},{},{},{:.9e},{},{}\n",
             o.name.replace(',', ";"),
             o.kind,
             o.verts,
@@ -970,6 +1010,13 @@ fn main() {
             o.engine_geos,
             o.candidates_native,
             o.candidates_geos,
+            o.exact
+                .as_ref()
+                .map(|r| format!("{:.17e}", r.radius))
+                .unwrap_or_default(),
+            o.us_exact,
+            o.candidates_exact,
+            format!("{:.17e}", o.clearance_exact),
         ));
     }
     if let Some(parent) = out_path.parent() {
