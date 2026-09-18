@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Maximum inscribed circle solvers extracted from IGE: fast paths, grid solver, Voronoi exact via spade, optional GEOS fallback"
-repository = "https://github.com/GIS-Inscribed-Geometry/IGE"
+repository = "https://github.com/Wolren/max-inscribed-circle"
 
 [lib]
 name = "max_inscribed_circle"
