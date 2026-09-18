@@ -1,41 +1,71 @@
 # max-inscribed-circle
 
-Maximum inscribed circle solvers extracted from [IGE](https://github.com/GIS-Inscribed-Geometry/IGE) `ige-core/src/solvers/mic`.
+Largest circle that fits inside a polygon, holes included. Pure Rust, with an
+optional GEOS fallback.
 
-Pipeline: fast paths (triangle, rectangle, convex quad), grid solver, Voronoi exact solver over a constrained Delaunay triangulation (`spade`), optional GEOS fallback behind the `geos` feature.
+```rust
+use max_inscribed_circle::geo_types::{LineString, Polygon};
+use max_inscribed_circle::{maximum_inscribed_circle, MicOptions};
+
+fn main() -> Result<(), max_inscribed_circle::MicError> {
+    let square = Polygon::new(
+        LineString::from(vec![(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0), (0.0, 0.0)]),
+        vec![],
+    );
+
+    let mic = maximum_inscribed_circle(&square, &MicOptions::default())?;
+    assert!((mic.center.x() - 2.0).abs() < 1e-9);
+    assert!((mic.radius - 2.0).abs() < 1e-9);
+    Ok(())
+}
+```
+
+The solve runs analytical fast paths for triangles, rectangles and convex
+quads, then a grid search, then an exact Voronoi solve over a constrained
+Delaunay triangulation. `MicResult::used_engine` reports which stage answered.
+The crate documentation describes the full pipeline.
 
 ## API
 
-- `maximum_inscribed_circle` - single polygon
-- `maximum_inscribed_circle_multipolygon` - best circle across components
-- `maximum_inscribed_circle_slice` - rayon-parallel batch solve
-- `maximum_inscribed_circle_with_workspace` - reusable workspace
+| Function | Use |
+|----------|-----|
+| `maximum_inscribed_circle` | one polygon |
+| `maximum_inscribed_circle_multipolygon` | best circle across components |
+| `maximum_inscribed_circle_slice` | rayon-parallel batch, input order preserved |
+| `maximum_inscribed_circle_with_workspace` | reuse a `MicWorkspace` across calls |
 
-## C ABI
+`MicResult` carries the center, the radius and its square, the indices of the
+supporting edges, the candidate count, the engine and approach that answered,
+and the component index for multipolygon solves.
 
-`src/ffi.rs` exposes `mic_solve`, `mic_solve_multipolygon`, and
-`mic_options_default`. Flat coordinate arrays in, `#[repr(C)]` structs
-out, 0 on success, -1 on error, panics caught at the boundary. The
-crate builds `cdylib` + `staticlib` + `rlib`. `FallbackOnly` without
-the `geos` feature fails cleanly with -1.
+## Features
 
-## Python
+| Feature | Effect |
+|---------|--------|
+| `geo-traits` | generic solves over any `geo_traits` polygon, plus `geo_types::Geometry` dispatch |
+| `geos` | GEOS fallback engine |
+| `shewchuk` | reserved: swaps the containment index for a stub that reports every query point as inside |
+| `python` | PyO3 extension module |
 
-Feature `python` provides the `max_inscribed_circle` module with
-`solve_mic_py` and `solve_mic_multipolygon_py`. Build an importable
-module with `cargo build --features python,extension-module` (or
-maturin).
+Default features are empty. `geos` links against the GEOS library at build time.
+The `shewchuk` feature is carried over from IGE and is not usable yet.
 
-## Geo conventions
+## Other interfaces
 
-The Rust API solves over `geo_types::Polygon` (re-exported as
-`max_inscribed_circle::geo_types` for version lock-in). Feature
-`geo-traits` adds generic solves over any foreign polygon implementing
-`geo_traits::PolygonTrait` plus `Geometry` dispatch
-(`maximum_inscribed_circle_geometry`): Polygon solves directly,
-MultiPolygon runs the native multipolygon solve, anything else is
-rejected with a named error.
+`mic_solve`, `mic_solve_multipolygon` and `mic_options_default` form a C ABI in
+`src/ffi.rs`, and the crate builds as `rlib`, `cdylib` and `staticlib`. The
+`python` feature exposes `solve_mic_py` and `solve_mic_multipolygon_py`.
+
+## Examples
+
+`examples/quickstart.rs` solves a square and a multipolygon, and prints the
+engine and approach behind each answer.
 
 ## Provenance
 
-Source files under `src/mic/` are byte copies of the IGE MIC solver at extraction time. `src/tuning.rs` carries only the `MIC_*` constants. `src/winding_index.rs` carries the stub previously at `solvers::common::winding_index`, wired only behind the `shewchuk` feature.
+The solver sources come from the IGE project, split out here as a standalone
+crate.
+
+## License
+
+Apache-2.0

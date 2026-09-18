@@ -1,3 +1,5 @@
+//! Exact MIC solver: candidate enumeration over boundary vertices,
+//! segment triples, ear circumcenters, and Voronoi sites.
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -106,6 +108,7 @@ fn quantize_origin(host: &HostPolygon) -> (f64, f64) {
 }
 
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
+/// Run the exact solver over a prepared workspace and return the best circle.
 pub fn solve_exact(
     workspace: &mut MicWorkspace,
     opts: &MicOptions,

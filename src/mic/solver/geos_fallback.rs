@@ -1,3 +1,4 @@
+//! GEOS-backed MIC fallback, compiled only with the `geos` feature.
 use geo_types::Polygon;
 #[cfg(feature = "geos")]
 use geos::{Geom, Geometry};
@@ -35,6 +36,7 @@ fn polygon_to_wkt(poly: &Polygon<f64>) -> String {
 
 #[cfg(feature = "geos")]
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
+/// Solve MIC through GEOS and refine the result against the segment table.
 pub fn solve_with_geos(
     host: &HostPolygon,
     opts: &MicOptions,

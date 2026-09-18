@@ -11,14 +11,17 @@ use geo_types::Polygon;
 pub struct WindingIndex;
 
 impl WindingIndex {
+    /// Create an index that reports every point as inside.
     pub fn new() -> Self {
         WindingIndex
     }
 
+    /// Create an index for a polygon; the stub keeps no geometry.
     pub fn from_polygon(_poly: &Polygon<f64>) -> Self {
         WindingIndex
     }
 
+    /// Return true for any query point; the stub runs no containment test.
     pub fn contains(&self, _x: f64, _y: f64) -> bool {
         true
     }

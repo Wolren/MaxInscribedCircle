@@ -2,9 +2,18 @@
 name = "max-inscribed-circle"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
-description = "Maximum inscribed circle solvers extracted from IGE: fast paths, grid solver, Voronoi exact via spade, optional GEOS fallback"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "Maximum inscribed circle solvers: analytical fast paths, grid refinement, and an exact Voronoi solver over a constrained Delaunay triangulation"
 repository = "https://github.com/Wolren/max-inscribed-circle"
+documentation = "https://docs.rs/max-inscribed-circle"
+readme = "README.md"
+keywords = ["gis", "geospatial", "geometry", "voronoi", "inscribed-circle"]
+categories = ["science::geo", "algorithms", "mathematics"]
+
+[package.metadata.docs.rs]
+features = ["geo-traits"]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [lib]
 name = "max_inscribed_circle"
