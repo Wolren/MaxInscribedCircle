@@ -31,7 +31,8 @@ pub struct HostPolygon {
     pub rings: Vec<RingMeta>,
     /// Canonicalized geometry used for predicates.
     pub polygon: Polygon<f64>,
-    /// Original polygon before normalization (for GEOS to get correct results)
+    /// Original polygon before normalization, kept so comparison solvers see
+    /// the caller's exact coordinates.
     pub original_polygon: Polygon<f64>,
 }
 

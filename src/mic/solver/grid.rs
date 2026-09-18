@@ -155,7 +155,7 @@ pub fn solve_grid(
 
         if cell.h_size > tolerance {
             let half_h = cell.h_size * 0.5;
-            // Split into 4 sub-cells (GEOS-style)
+            // Split into 4 sub-cells, the same refinement step GEOS uses
             let sub_cells = [
                 (cell.x - half_h, cell.y - half_h),
                 (cell.x + half_h, cell.y - half_h),

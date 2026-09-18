@@ -1,4 +1,9 @@
 //! Maximum Inscribed Circle (MIC) solvers for polygonal inputs.
+//!
+//! One pipeline: analytical fast paths, then the grid search, then the exact
+//! candidate enumeration. There is no external solver in the pipeline; the
+//! GEOS comparison lives behind the `bench-geos` feature in
+//! `solver::bench_geos` and is never called from here.
 
 pub mod index;
 pub mod input;
@@ -14,17 +19,6 @@ use self::solver::exact::solve_exact;
 use self::solver::grid::solve_grid;
 use self::workspace::MicWorkspace;
 
-/// Engine selection for MIC solving.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MicEngine {
-    /// Use the native Rust polygon-specialized solver only.
-    ExactOnly,
-    /// Use GEOS fallback only.
-    FallbackOnly,
-    /// Try exact first, then GEOS fallback if exact fails.
-    ExactThenGeos,
-}
-
 /// Numeric robustness mode for the exact engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RobustMode {
@@ -37,9 +31,7 @@ pub enum RobustMode {
 /// Solver configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MicOptions {
-    /// Engine selection: exact only, GEOS fallback only, or exact then GEOS.
-    pub engine: MicEngine,
-    /// Robustness mode: filtered adds candidate filtering and a tighter GEOS tolerance.
+    /// Robustness mode: Filtered adds candidate filtering to the exact solver.
     pub robust_mode: RobustMode,
     /// Use a BVH instead of a uniform grid for nearest-boundary queries.
     pub use_bvh: bool,
@@ -51,7 +43,6 @@ pub struct MicOptions {
 impl Default for MicOptions {
     fn default() -> Self {
         Self {
-            engine: MicEngine::ExactThenGeos,
             robust_mode: RobustMode::Filtered,
             use_bvh: false,
             use_parallel: false,
@@ -59,15 +50,15 @@ impl Default for MicOptions {
     }
 }
 
-/// Engine that produced the final result.
+/// Solver that produced the final result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MicUsedEngine {
     /// The native exact solver produced the circle.
     Exact,
     /// The grid solver produced the circle.
     Grid,
-    /// The GEOS fallback produced the circle.
-    GeosFallback,
+    /// The GEOS comparison solver produced the circle, behind `bench-geos`.
+    Geos,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,8 +76,8 @@ pub enum MicApproach {
     GridSolver,
     /// Exact candidate enumeration over segment and vertex Voronoi sites.
     VoronoiExact,
-    /// GEOS maximum inscribed circle fallback.
-    GeosFallback,
+    /// GEOS maximum inscribed circle, behind the `bench-geos` feature.
+    Geos,
 }
 
 /// MIC solve result.
@@ -102,7 +93,7 @@ pub struct MicResult {
     pub support_segments: Vec<usize>,
     /// Number of candidate centers evaluated during the solve.
     pub candidate_count: usize,
-    /// Engine that produced this result.
+    /// Solver that produced this result.
     pub used_engine: MicUsedEngine,
     /// Index of the multipolygon component that holds the circle, if any.
     pub component_index: Option<usize>,
@@ -122,11 +113,8 @@ pub enum MicError {
     /// The exact solver failed.
     #[error("exact MIC solver failed: {0}")]
     ExactFailed(String),
-    /// The GEOS fallback was requested but the `geos` feature is disabled.
-    #[error("GEOS fallback feature is not enabled")]
-    GeosFeatureDisabled,
-    /// The GEOS fallback failed.
-    #[error("GEOS fallback failed: {0}")]
+    /// The GEOS comparison solve failed, behind the `bench-geos` feature.
+    #[error("GEOS comparison solve failed: {0}")]
     GeosFailed(String),
     /// The GEOS result could not be parsed into a circle.
     #[error("unsupported GEOS MIC output: {0}")]
@@ -211,7 +199,7 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
     // We intentionally do NOT dispatch arbitrary N-gons to fast_convex_n here:
     // real-world data has near-collinear reflex vertices and numerical noise that
     // can fool convexity checks, producing kernel circles smaller than the true MIC.
-    if opts.engine != MicEngine::FallbackOnly && host.ring_count() == 1 {
+    if host.ring_count() == 1 {
         let outer_len = host.outer_ring().len();
         let result = if outer_len == 4 {
             // Triangle - exact incenter formula
@@ -245,86 +233,26 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
         }
     }
 
-    // Phase 1: Use grid solver for complex shapes - matches GEOS exactly and is much faster
-    // Skip for FallbackOnly - let GEOS solve independently for comparison
-    let use_grid = opts.engine != MicEngine::FallbackOnly;
+    // Phase 1: grid search over the bounding box. It answers most complex
+    // shapes and returns before the exact stage runs.
+    let workspace = MicWorkspace::new(host.clone(), opts.use_bvh)?;
+    let bounds = host.bounds().unwrap_or((0.0, 0.0, 1.0, 1.0));
+    let diag = (bounds.2 - bounds.0).hypot(bounds.3 - bounds.1).max(1.0);
+    let tolerance = (diag * 1e-7).max(1e-12);
 
-    if use_grid {
-        // Use grid solver - now uses original polygon (no normalization)
-        let workspace = MicWorkspace::new(host.clone(), opts.use_bvh)?;
-        let bounds = host.bounds().unwrap_or((0.0, 0.0, 1.0, 1.0));
-        let diag = (bounds.2 - bounds.0).hypot(bounds.3 - bounds.1).max(1.0);
-        let tolerance = (diag * 1e-7).max(1e-12);
-
-        if let Some(grid_result) =
-            solve_grid(host, &workspace.pip_index, &workspace.nb_index, tolerance)
-        {
-            return Ok(grid_result);
-        }
+    if let Some(grid_result) =
+        solve_grid(host, &workspace.pip_index, &workspace.nb_index, tolerance)
+    {
+        return Ok(grid_result);
     }
 
-    match opts.engine {
-        MicEngine::ExactOnly => run_exact(host, opts),
-        MicEngine::FallbackOnly => run_geos(host, None, opts),
-        MicEngine::ExactThenGeos => {
-            let mut workspace = match MicWorkspace::new(host.clone(), opts.use_bvh) {
-                Ok(w) => w,
-                Err(e) => {
-                    #[cfg(feature = "geos")]
-                    {
-                        return run_geos(host, None, opts).map_err(|fe| {
-                            MicError::GeosFailed(format!(
-                                "workspace failed ({e}); fallback failed ({fe})"
-                            ))
-                        });
-                    }
-                    #[cfg(not(feature = "geos"))]
-                    {
-                        return Err(e);
-                    }
-                }
-            };
-            match solve_exact(&mut workspace, opts) {
-                Ok(result) => Ok(result),
-                Err(e) => {
-                    #[cfg(feature = "geos")]
-                    {
-                        let seg_index = workspace.nb_index.segments().clone();
-                        run_geos(host, Some(&seg_index), opts).map_err(|fallback_err| {
-                            MicError::GeosFailed(format!(
-                                "exact failed ({e}); fallback failed ({fallback_err})"
-                            ))
-                        })
-                    }
-                    #[cfg(not(feature = "geos"))]
-                    {
-                        Err(MicError::ExactFailed(e.to_string()))
-                    }
-                }
-            }
-        }
-    }
+    // Phase 2: exact candidate enumeration over Voronoi sites.
+    run_exact(host, opts)
 }
 
 fn run_exact(host: &HostPolygon, opts: &MicOptions) -> Result<MicResult, MicError> {
     let mut workspace = MicWorkspace::new(host.clone(), opts.use_bvh)?;
     solve_exact(&mut workspace, opts).map_err(|err| MicError::ExactFailed(err.to_string()))
-}
-
-fn run_geos(
-    host: &HostPolygon,
-    existing_seg_index: Option<&input::SegmentIndex>,
-    opts: &MicOptions,
-) -> Result<MicResult, MicError> {
-    #[cfg(feature = "geos")]
-    {
-        self::solver::geos_fallback::solve_with_geos(host, opts, existing_seg_index)
-    }
-    #[cfg(not(feature = "geos"))]
-    {
-        let _ = (host, existing_seg_index, opts);
-        Err(MicError::GeosFeatureDisabled)
-    }
 }
 
 #[cfg(test)]
@@ -348,7 +276,6 @@ mod tests {
     #[test]
     fn mic_default_options() {
         let opts = MicOptions::default();
-        assert_eq!(opts.engine, MicEngine::ExactThenGeos);
         assert_eq!(opts.robust_mode, RobustMode::Filtered);
         assert!(!opts.use_bvh);
     }
@@ -357,7 +284,6 @@ mod tests {
     fn mic_exact_square_radius() {
         let poly = square(10.0);
         let opts = MicOptions {
-            engine: MicEngine::ExactOnly,
             robust_mode: RobustMode::Filtered,
             use_bvh: false,
             use_parallel: false,
@@ -381,7 +307,6 @@ mod tests {
             vec![],
         );
         let opts = MicOptions {
-            engine: MicEngine::ExactOnly,
             robust_mode: RobustMode::Filtered,
             use_bvh: false,
             use_parallel: false,
@@ -402,7 +327,6 @@ mod tests {
             vec![],
         );
         let opts = MicOptions {
-            engine: MicEngine::ExactOnly,
             robust_mode: RobustMode::Filtered,
             use_bvh: false,
             use_parallel: false,

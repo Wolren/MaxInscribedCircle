@@ -23,21 +23,18 @@
 //!
 //! # Solve pipeline
 //!
-//! [`MicResult::used_engine`] reports the stage that produced the answer:
+//! Three stages, all native Rust. [`MicResult::used_engine`] reports which one
+//! produced the answer:
 //!
 //! 1. **Analytical fast paths** for single-ring inputs of four or five
 //!    vertices: triangle incenter, then rectangle, then a convex quad solve.
 //!    The convex quad result is checked against true edge distances and
 //!    discarded when it is more than 1% off.
 //! 2. **Grid search** over the bounding box, with a tolerance derived from the
-//!    diagonal (`max(diag * 1e-7, 1e-12)`). It runs for every engine except
-//!    [`MicEngine::FallbackOnly`] and returns early when it finds a candidate.
-//! 3. **Exact Voronoi solve** over a constrained Delaunay triangulation
-//!    (`spade`). Reached under [`MicEngine::ExactOnly`], and under the default
-//!    [`MicEngine::ExactThenGeos`] whenever the grid stage finds nothing.
-//! 4. **GEOS fallback** under [`MicEngine::FallbackOnly`], and under
-//!    [`MicEngine::ExactThenGeos`] when the exact stage fails. Without the
-//!    `geos` feature this returns [`MicError::GeosFeatureDisabled`].
+//!    diagonal (`max(diag * 1e-7, 1e-12)`). It returns early when it finds a
+//!    candidate, which is the usual outcome for complex shapes.
+//! 3. **Exact Voronoi solve** over candidate sites, reached when the grid stage
+//!    finds nothing.
 //!
 //! A degenerate input, such as a zero-area ring, fails fast with
 //! [`MicError::InvalidInput`] instead of returning a meaningless circle.
@@ -51,19 +48,29 @@
 //! | [`maximum_inscribed_circle_slice`] | rayon-parallel batch, input order preserved |
 //! | [`maximum_inscribed_circle_with_workspace`] | reuse a [`MicWorkspace`] across calls |
 //!
+//! # GEOS comparison
+//!
+//! The `bench-geos` feature compiles `mic::solver::bench_geos`, which calls
+//! the GEOS `MaximumInscribedCircle` construct so benchmarks can cross-check
+//! the native solvers. It is not an engine: nothing in [`mic`] calls it, and
+//! the default feature set does not compile it. GEOS runs the same
+//! cell-refinement branch and bound as the grid stage, so agreement between
+//! them means two implementations of one algorithm match, not that an
+//! independent method confirms the radius.
+//!
 //! # Features
 //!
 //! | Feature | Effect |
 //! |---------|--------|
-//! | `geos` | GEOS fallback engine |
+//! | `bench-geos` | comparison only: links the GEOS C library so benchmarks can compare solvers |
 //! | `geo-traits` | generic solves over any `geo_traits` polygon, plus `geo_types::Geometry` dispatch |
 //! | `shewchuk` | reserved: swaps the ray-casting containment index for the `winding_index` stub, which reports every query point as inside |
 //! | `python` | PyO3 extension module named `max_inscribed_circle` |
 //! | `extension-module` | build the Python module as an importable extension |
 //!
-//! Default features are empty. The `geos` feature links against the GEOS
-//! library, and its build script expects `GEOS_LIB_DIR` and `GEOS_VERSION` when
-//! GEOS cannot be found through `pkg-config`.
+//! Default features are empty. The `bench-geos` feature links against the GEOS
+//! C library, and its build script expects `GEOS_LIB_DIR` and `GEOS_VERSION`
+//! when GEOS cannot be found through `pkg-config`.
 //!
 //! The `shewchuk` feature is carried over from IGE and is not usable yet: its
 //! containment index is a stub, so point-in-polygon tests answer true for every
@@ -99,8 +106,8 @@ pub use geo_types;
 pub use mic::workspace::MicWorkspace;
 pub use mic::{
     maximum_inscribed_circle, maximum_inscribed_circle_multipolygon,
-    maximum_inscribed_circle_slice, maximum_inscribed_circle_with_workspace, MicApproach,
-    MicEngine, MicError, MicOptions, MicResult, MicUsedEngine, RobustMode,
+    maximum_inscribed_circle_slice, maximum_inscribed_circle_with_workspace, MicApproach, MicError,
+    MicOptions, MicResult, MicUsedEngine, RobustMode,
 };
 
 #[cfg(feature = "python")]
