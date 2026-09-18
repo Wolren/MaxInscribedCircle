@@ -50,11 +50,22 @@ pub fn solve_mic_geos_host(
     host: &HostPolygon,
     robust_mode: RobustMode,
 ) -> Result<MicResult, MicError> {
+    solve_mic_geos_with_tolerance(host, geos_tolerance_for(host, robust_mode))
+}
+
+/// Solve an already-normalized host polygon with GEOS at an explicit tolerance.
+///
+/// Use this to compare against a solver that refines to a known tolerance, for
+/// example [`crate::mic::grid_tolerance`]: at matched tolerances the comparison
+/// measures the solvers, not the tolerance gap between them.
+pub fn solve_mic_geos_with_tolerance(
+    host: &HostPolygon,
+    tolerance: f64,
+) -> Result<MicResult, MicError> {
     let poly_wkt = polygon_to_wkt(&host.original_polygon);
     let geom = Geometry::new_from_wkt(&poly_wkt)
         .map_err(|err| MicError::GeosFailed(format!("failed to build GEOS polygon: {err}")))?;
 
-    let tolerance = geos_tolerance_for(host, robust_mode);
     let radius_geom = geom
         .maximum_inscribed_circle(tolerance)
         .map_err(|err| MicError::GeosFailed(format!("maximum_inscribed_circle failed: {err}")))?;

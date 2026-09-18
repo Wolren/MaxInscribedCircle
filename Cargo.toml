@@ -42,6 +42,13 @@ python = ["dep:pyo3"]
 extension-module = ["pyo3/extension-module"]
 geo-traits = ["dep:geo-traits"]
 
+[dev-dependencies]
+wkt = { version = "0.14", features = ["geo-types"] }
+
 [[example]]
 name = "compare_geos"
+required-features = ["bench-geos"]
+
+[[example]]
+name = "parity_geos"
 required-features = ["bench-geos"]

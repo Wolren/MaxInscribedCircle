@@ -236,9 +236,7 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
     // Phase 1: grid search over the bounding box. It answers most complex
     // shapes and returns before the exact stage runs.
     let workspace = MicWorkspace::new(host.clone(), opts.use_bvh)?;
-    let bounds = host.bounds().unwrap_or((0.0, 0.0, 1.0, 1.0));
-    let diag = (bounds.2 - bounds.0).hypot(bounds.3 - bounds.1).max(1.0);
-    let tolerance = (diag * 1e-7).max(1e-12);
+    let tolerance = grid_tolerance(host);
 
     if let Some(grid_result) =
         solve_grid(host, &workspace.pip_index, &workspace.nb_index, tolerance)
@@ -248,6 +246,16 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
 
     // Phase 2: exact candidate enumeration over Voronoi sites.
     run_exact(host, opts)
+}
+
+/// Tolerance the grid stage refines to on a host polygon: `max(diag * 1e-7, 1e-12)`.
+///
+/// Exposed so a comparison harness can hand another solver the same tolerance
+/// the native pipeline uses, instead of comparing solvers at mixed tolerances.
+pub fn grid_tolerance(host: &HostPolygon) -> f64 {
+    let bounds = host.bounds().unwrap_or((0.0, 0.0, 1.0, 1.0));
+    let diag = (bounds.2 - bounds.0).hypot(bounds.3 - bounds.1).max(1.0);
+    (diag * 1e-7).max(1e-12)
 }
 
 fn run_exact(host: &HostPolygon, opts: &MicOptions) -> Result<MicResult, MicError> {
