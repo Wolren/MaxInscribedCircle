@@ -2,12 +2,12 @@
 //!
 //! Every exported function returns 0 on success, -1 on error, and never
 //! lets a Rust panic cross into the host process. Ported from IGE `ige-c`
-//! with the `ige_` prefix replaced by `mic_`. The GEOS fallback path stays
-//! compiled out unless the `geos` feature is enabled.
+//! with the `ige_` prefix replaced by `mic_`. The native pipeline is the only
+//! solver behind this ABI; the GEOS comparison is not reachable from C.
 
 use super::mic::{
-    maximum_inscribed_circle, maximum_inscribed_circle_multipolygon, MicEngine, MicOptions,
-    MicUsedEngine, RobustMode,
+    maximum_inscribed_circle, maximum_inscribed_circle_multipolygon, MicOptions, MicUsedEngine,
+    RobustMode,
 };
 use geo_types::{Coord, LineString, Polygon};
 use libc::{c_double, c_int, size_t};
@@ -34,7 +34,7 @@ pub struct MicResultC {
     pub radius: c_double,
     /// Squared radius, radius * radius.
     pub radius_sq: c_double,
-    /// 0 = exact, 1 = geos fallback, 2 = grid.
+    /// 0 = exact, 1 = grid, 2 = GEOS comparison solve.
     pub used_engine: c_int,
     /// Number of candidate centers evaluated during the solve.
     pub candidate_count: size_t,
@@ -46,18 +46,13 @@ pub struct MicResultC {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MicOptionsC {
-    /// 0 = ExactOnly, 1 = FallbackOnly, 2 = ExactThenGeos.
-    pub engine: c_int,
     /// 0 = FastF64, 1 = Filtered.
     pub robust_mode: c_int,
 }
 
 impl Default for MicOptionsC {
     fn default() -> Self {
-        Self {
-            engine: 2,
-            robust_mode: 1,
-        }
+        Self { robust_mode: 1 }
     }
 }
 
@@ -133,14 +128,6 @@ pub fn guard(f: impl FnOnce() -> c_int + std::panic::UnwindSafe) -> c_int {
     std::panic::catch_unwind(f).unwrap_or(-1)
 }
 
-fn engine_from(v: c_int) -> MicEngine {
-    match v {
-        0 => MicEngine::ExactOnly,
-        1 => MicEngine::FallbackOnly,
-        _ => MicEngine::ExactThenGeos,
-    }
-}
-
 fn robust_from(v: c_int) -> RobustMode {
     match v {
         0 => RobustMode::FastF64,
@@ -151,8 +138,8 @@ fn robust_from(v: c_int) -> RobustMode {
 fn engine_to(v: MicUsedEngine) -> c_int {
     match v {
         MicUsedEngine::Exact => 0,
-        MicUsedEngine::GeosFallback => 1,
-        MicUsedEngine::Grid => 2,
+        MicUsedEngine::Grid => 1,
+        MicUsedEngine::Geos => 2,
     }
 }
 
@@ -176,7 +163,6 @@ fn fill(r: &super::mic::MicResult, out: *mut MicResultC) -> c_int {
 
 fn opts_from(raw: MicOptionsC) -> MicOptions {
     MicOptions {
-        engine: engine_from(raw.engine),
         robust_mode: robust_from(raw.robust_mode),
         use_bvh: false,
         use_parallel: false,
@@ -185,8 +171,7 @@ fn opts_from(raw: MicOptionsC) -> MicOptions {
 
 /// Solve MIC. Holes optional (null = none).
 ///
-/// Returns 0 on success, -1 on error. `FallbackOnly` without the `geos`
-/// feature returns -1 with no side effects.
+/// Returns 0 on success, -1 on error.
 ///
 /// # Safety
 /// All pointer arguments must be valid for reads of their declared lengths
@@ -216,10 +201,6 @@ pub unsafe extern "C" fn mic_solve(
         } else {
             *options
         };
-        #[cfg(not(feature = "geos"))]
-        if raw.engine == 1 {
-            return -1;
-        }
         match maximum_inscribed_circle(&poly, &opts_from(raw)) {
             Ok(r) => fill(&r, result),
             Err(_) => -1,
@@ -260,10 +241,6 @@ pub unsafe extern "C" fn mic_solve_multipolygon(
         } else {
             *options
         };
-        #[cfg(not(feature = "geos"))]
-        if raw.engine == 1 {
-            return -1;
-        }
         match maximum_inscribed_circle_multipolygon(&multi, &opts_from(raw)) {
             Ok(r) => fill(&r, result),
             Err(_) => -1,
@@ -272,7 +249,7 @@ pub unsafe extern "C" fn mic_solve_multipolygon(
 }
 
 #[no_mangle]
-/// Return the default C ABI options: exact-then-GEOS engine, filtered mode.
+/// Return the default C ABI options: filtered robustness mode.
 pub extern "C" fn mic_options_default() -> MicOptionsC {
     MicOptionsC::default()
 }

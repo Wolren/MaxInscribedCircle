@@ -34,8 +34,14 @@ geo-traits = { version = "0.3", optional = true }
 
 [features]
 default = []
-geos = ["dep:geos"]
+# Comparison only: links the GEOS C library so benchmarks can cross-check the
+# native solvers. Never used by the solve pipeline.
+bench-geos = ["dep:geos"]
 shewchuk = []
 python = ["dep:pyo3"]
 extension-module = ["pyo3/extension-module"]
 geo-traits = ["dep:geo-traits"]
+
+[[example]]
+name = "compare_geos"
+required-features = ["bench-geos"]

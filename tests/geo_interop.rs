@@ -57,7 +57,6 @@ fn geometry_dispatch_polygon_and_multi() {
 #[test]
 fn geometry_dispatch_rejects_point() {
     let geom = geo_types::Geometry::Point(geo_types::Point::new(1.0, 2.0));
-    let err =
-        maximum_inscribed_circle_geometry(&geom, &MicOptions::default()).unwrap_err();
+    let err = maximum_inscribed_circle_geometry(&geom, &MicOptions::default()).unwrap_err();
     assert!(err.to_string().contains("Point"));
 }

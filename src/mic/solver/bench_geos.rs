@@ -1,54 +1,60 @@
-//! GEOS-backed MIC fallback, compiled only with the `geos` feature.
+//! GEOS comparison solver for benchmarks, behind the `bench-geos` feature.
+//!
+//! This module links the GEOS C library so benchmark and comparison harnesses
+//! can cross-check the native solvers against GEOS `MaximumInscribedCircle`.
+//! It is never part of the solve pipeline: nothing in [`crate::mic`] calls into
+//! it, and the default feature set does not compile it.
+//!
+//! GEOS runs the same cell-refinement branch and bound as
+//! [`crate::mic::solver::grid`], so a close match means two implementations of
+//! one algorithm agree, not that an independent method confirms the result.
+//! Compare at matched tolerances, using [`geos_tolerance_for`].
+
 use geo_types::Polygon;
-#[cfg(feature = "geos")]
 use geos::{Geom, Geometry};
 
 use super::super::index::NearestBoundaryIndex;
 use super::super::input::{HostPolygon, SegmentIndex};
-use super::super::{MicApproach, MicError, MicOptions, MicResult, MicUsedEngine, RobustMode};
+use super::super::{MicApproach, MicError, MicResult, MicUsedEngine, RobustMode};
 
-#[cfg(feature = "geos")]
-fn polygon_to_wkt(poly: &Polygon<f64>) -> String {
-    let mut out = String::from("POLYGON (");
-    let ext = poly.exterior();
-    out.push('(');
-    for (idx, coord) in ext.0.iter().enumerate() {
-        if idx > 0 {
-            out.push_str(", ");
-        }
-        out.push_str(&format!("{} {}", coord.x, coord.y));
-    }
-    out.push(')');
-    for hole in poly.interiors() {
-        out.push_str(", ");
-        out.push('(');
-        for (idx, coord) in hole.0.iter().enumerate() {
-            if idx > 0 {
-                out.push_str(", ");
-            }
-            out.push_str(&format!("{} {}", coord.x, coord.y));
-        }
-        out.push(')');
-    }
-    out.push(')');
-    out
+/// Tolerance to hand GEOS for a host polygon, scaled by its diagonal.
+///
+/// `FastF64` gives `diag * 1e-6` and `Filtered` gives `diag * 1e-8`, both
+/// floored at 1e-12. The native grid stage refines to a tighter `diag * 1e-7`,
+/// so comparing across mismatched tolerances measures the tolerance rather
+/// than the solver.
+pub fn geos_tolerance_for(host: &HostPolygon, robust_mode: RobustMode) -> f64 {
+    let Some((min_x, min_y, max_x, max_y)) = host.bounds() else {
+        return 1e-6;
+    };
+    let diag = (max_x - min_x).hypot(max_y - min_y).max(1.0);
+    let factor = match robust_mode {
+        RobustMode::FastF64 => 1e-6,
+        RobustMode::Filtered => 1e-8,
+    };
+    (diag * factor).max(1e-12)
 }
 
-#[cfg(feature = "geos")]
-#[cfg_attr(feature = "hotpath", hotpath::measure)]
-/// Solve MIC through GEOS and refine the result against the segment table.
-pub fn solve_with_geos(
+/// Solve a polygon with GEOS, for benchmark and comparison runs.
+pub fn solve_mic_geos(poly: &Polygon<f64>, robust_mode: RobustMode) -> Result<MicResult, MicError> {
+    let host = HostPolygon::from_polygon(poly)?;
+    solve_mic_geos_host(&host, robust_mode)
+}
+
+/// Solve an already-normalized host polygon with GEOS.
+///
+/// GEOS receives the original ring coordinates, not the normalized copy, and
+/// the returned center and radius are re-measured against the segment table so
+/// both solvers report radii on the same basis.
+pub fn solve_mic_geos_host(
     host: &HostPolygon,
-    opts: &MicOptions,
-    existing_seg_index: Option<&SegmentIndex>,
-) -> std::result::Result<MicResult, MicError> {
-    // Use ORIGINAL polygon (not normalized) for GEOS to avoid the bug where
-    // normalization breaks certain polygons and causes wrong MIC results
+    robust_mode: RobustMode,
+) -> Result<MicResult, MicError> {
     let poly_wkt = polygon_to_wkt(&host.original_polygon);
     let geom = Geometry::new_from_wkt(&poly_wkt)
         .map_err(|err| MicError::GeosFailed(format!("failed to build GEOS polygon: {err}")))?;
 
-    let tolerance = geos_tolerance(host, opts);
+    let tolerance = geos_tolerance_for(host, robust_mode);
     let radius_geom = geom
         .maximum_inscribed_circle(tolerance)
         .map_err(|err| MicError::GeosFailed(format!("maximum_inscribed_circle failed: {err}")))?;
@@ -57,11 +63,7 @@ pub fn solve_with_geos(
         .map_err(|err| MicError::GeosFailed(format!("failed to decode GEOS MIC output: {err}")))?;
 
     let (center, boundary_hint) = parse_geos_output(&out_wkt)?;
-    let seg_index = match existing_seg_index {
-        Some(idx) => idx.clone(),
-        None => SegmentIndex::from_host(host),
-    };
-    let nb_index = NearestBoundaryIndex::new(seg_index, false);
+    let nb_index = NearestBoundaryIndex::new(SegmentIndex::from_host(host), false);
     let Some((nearest_sq, _)) = nb_index.nearest_distance_sq(center.0, center.1) else {
         return Err(MicError::NoCircleFound);
     };
@@ -81,39 +83,31 @@ pub fn solve_with_geos(
         radius_sq,
         support_segments,
         candidate_count: 1,
-        used_engine: MicUsedEngine::GeosFallback,
-        approach: MicApproach::GeosFallback,
+        used_engine: MicUsedEngine::Geos,
+        approach: MicApproach::Geos,
         component_index: None,
     })
 }
 
-#[cfg(feature = "geos")]
-fn geos_tolerance(host: &HostPolygon, opts: &MicOptions) -> f64 {
-    let Some((min_x, min_y, max_x, max_y)) = host.bounds() else {
-        return 1e-6;
-    };
-    let diag = (max_x - min_x).hypot(max_y - min_y).max(1.0);
-    let factor = match opts.robust_mode {
-        RobustMode::FastF64 => 1e-6,
-        RobustMode::Filtered => 1e-8,
-    };
-    (diag * factor).max(1e-12)
-}
-
-#[allow(dead_code)]
-fn host_polygon_to_wkt(host: &HostPolygon) -> String {
+fn polygon_to_wkt(poly: &Polygon<f64>) -> String {
     let mut out = String::from("POLYGON (");
-    for ring_id in 0..host.ring_count() {
-        if ring_id > 0 {
+    let ext = poly.exterior();
+    out.push('(');
+    for (idx, coord) in ext.0.iter().enumerate() {
+        if idx > 0 {
             out.push_str(", ");
         }
+        out.push_str(&format!("{} {}", coord.x, coord.y));
+    }
+    out.push(')');
+    for hole in poly.interiors() {
+        out.push_str(", ");
         out.push('(');
-        let ring = host.ring_coords(ring_id);
-        for (idx, p) in ring.iter().enumerate() {
+        for (idx, coord) in hole.0.iter().enumerate() {
             if idx > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&format!("{} {}", p[0], p[1]));
+            out.push_str(&format!("{} {}", coord.x, coord.y));
         }
         out.push(')');
     }
