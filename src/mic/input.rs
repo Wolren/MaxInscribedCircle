@@ -1,3 +1,9 @@
+//! Polygon input normalization and boundary segment tables for the MIC
+//! solvers.
+//!
+//! [`HostPolygon`] flattens `geo_types` rings into one coordinate buffer,
+//! and [`SegmentIndex`] exposes the boundary edges as a struct-of-arrays
+//! table shared by the indexes and the solvers.
 use geo::Area;
 use geo_types::{Coord, LineString, Polygon};
 
@@ -8,8 +14,11 @@ const NORMALIZE_EPS: f64 = 1e-12;
 /// Metadata describing a ring inside the flat coordinate buffer.
 #[derive(Debug, Clone)]
 pub struct RingMeta {
+    /// Index into `HostPolygon::coords` where this ring starts.
     pub start: usize,
+    /// Exclusive index into `HostPolygon::coords` where this ring ends.
     pub end: usize,
+    /// True for an interior ring, false for the exterior ring.
     pub is_hole: bool,
 }
 
@@ -27,6 +36,7 @@ pub struct HostPolygon {
 }
 
 impl HostPolygon {
+    /// Flatten a `geo_types` polygon into rings, rejecting zero-area input.
     pub fn from_polygon(poly: &Polygon<f64>) -> Result<Self, MicError> {
         // NO normalization - use original polygon coordinates directly to avoid any geometry alteration
         let mut coords = Vec::new();
@@ -68,19 +78,23 @@ impl HostPolygon {
         })
     }
 
+    /// Coordinates of ring `ring_id`, including its closing point.
     pub fn ring_coords(&self, ring_id: usize) -> &[[f64; 2]] {
         let meta = &self.rings[ring_id];
         &self.coords[meta.start..meta.end]
     }
 
+    /// Coordinates of the exterior ring, including its closing point.
     pub fn outer_ring(&self) -> &[[f64; 2]] {
         self.ring_coords(0)
     }
 
+    /// Number of rings, the exterior ring first.
     pub fn ring_count(&self) -> usize {
         self.rings.len()
     }
 
+    /// All ring vertices in ring order, with closing points omitted.
     pub fn unique_vertices(&self) -> Vec<[f64; 2]> {
         let mut out = Vec::new();
         for ring_id in 0..self.rings.len() {
@@ -95,6 +109,7 @@ impl HostPolygon {
         out
     }
 
+    /// Bounds as (min_x, min_y, max_x, max_y), or None when there are no coords.
     pub fn bounds(&self) -> Option<(f64, f64, f64, f64)> {
         if self.coords.is_empty() {
             return None;
@@ -118,23 +133,38 @@ impl HostPolygon {
 /// Struct-of-arrays segment table over all ring edges.
 #[derive(Debug, Clone)]
 pub struct SegmentIndex {
+    /// Segment start x; index i matches index i of every other array here.
     pub ax: Vec<f64>,
+    /// Segment start y, aligned with `ax`.
     pub ay: Vec<f64>,
+    /// Segment end x, aligned with `ax`.
     pub bx: Vec<f64>,
+    /// Segment end y, aligned with `ax`.
     pub by: Vec<f64>,
+    /// Index into `HostPolygon::rings` of the ring owning each segment.
     pub ring_id: Vec<usize>,
+    /// Edge position of each segment within its own ring.
     pub edge_id: Vec<usize>,
+    /// True when the ring owning the segment is a hole.
     pub is_hole_edge: Vec<bool>,
+    /// Minimal x of each segment's bounding box.
     pub bbox_minx: Vec<f64>,
+    /// Maximal x of each segment's bounding box.
     pub bbox_maxx: Vec<f64>,
+    /// Minimal y of each segment's bounding box.
     pub bbox_miny: Vec<f64>,
+    /// Maximal y of each segment's bounding box.
     pub bbox_maxy: Vec<f64>,
+    /// Segment direction x, computed as bx - ax.
     pub dir_x: Vec<f64>,
+    /// Segment direction y, computed as by - ay.
     pub dir_y: Vec<f64>,
+    /// Squared segment length, dir_x * dir_x + dir_y * dir_y.
     pub len_sq: Vec<f64>,
 }
 
 impl SegmentIndex {
+    /// Build the table from every non-degenerate edge of a host polygon.
     pub fn from_host(host: &HostPolygon) -> Self {
         // Collect ring data and flatten sequentially
         let ring_data: Vec<_> = host
@@ -217,14 +247,17 @@ impl SegmentIndex {
         index
     }
 
+    /// Number of segments in the table.
     pub fn len(&self) -> usize {
         self.ax.len()
     }
 
+    /// True when the table holds no segments.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Midpoint of segment `seg_idx` as (x, y).
     pub fn midpoint(&self, seg_idx: usize) -> (f64, f64) {
         (
             (self.ax[seg_idx] + self.bx[seg_idx]) * 0.5,
@@ -233,6 +266,7 @@ impl SegmentIndex {
     }
 
     #[inline]
+    /// Squared distance from point (x, y) to segment `seg_idx`.
     pub fn point_segment_distance_sq(&self, seg_idx: usize, x: f64, y: f64) -> f64 {
         let ax = self.ax[seg_idx];
         let ay = self.ay[seg_idx];
@@ -250,6 +284,7 @@ impl SegmentIndex {
 
     #[cfg(feature = "simd")]
     #[inline]
+    /// Smallest squared distance from (x, y) to segments `start..end`.
     pub fn batch_point_segment_distance_sq(
         &self,
         px: f64,
@@ -313,6 +348,7 @@ impl SegmentIndex {
     }
 
     #[cfg(not(feature = "simd"))]
+    /// Smallest squared distance from (x, y) to segments `start..end`.
     pub fn batch_point_segment_distance_sq(&self, x: f64, y: f64, start: usize, end: usize) -> f64 {
         let mut best = f64::INFINITY;
         for i in start..end {
@@ -326,6 +362,7 @@ impl SegmentIndex {
 
     #[cfg(feature = "simd")]
     #[inline]
+    /// Smallest squared distance over `start..end` and the segment that achieves it.
     pub fn batch_point_segment_distance_sq_with_index(
         &self,
         px: f64,
@@ -403,6 +440,7 @@ impl SegmentIndex {
 
     #[cfg(not(feature = "simd"))]
     #[inline]
+    /// Smallest squared distance over `start..end` and the segment that achieves it.
     pub fn batch_point_segment_distance_sq_with_index(
         &self,
         x: f64,

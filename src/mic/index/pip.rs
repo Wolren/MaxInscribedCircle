@@ -1,3 +1,5 @@
+//! Point-in-polygon index: exact winding numbers behind the `shewchuk`
+//! feature, even-odd ray casting otherwise.
 #[cfg(feature = "shewchuk")]
 use crate::winding_index::WindingIndex;
 #[cfg(feature = "shewchuk")]
@@ -41,6 +43,7 @@ struct RingBbox {
 }
 
 impl PipIndex {
+    /// Build the containment index from the rings of a host polygon.
     pub fn new(host: &super::super::input::HostPolygon) -> Self {
         #[cfg(feature = "shewchuk")]
         {
@@ -105,6 +108,7 @@ impl PipIndex {
     }
 
     #[inline]
+    /// True when (x, y) is inside the polygon, with hole interiors excluded.
     pub fn contains_strict_xy(&self, x: f64, y: f64) -> bool {
         #[cfg(feature = "shewchuk")]
         {

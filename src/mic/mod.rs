@@ -37,9 +37,14 @@ pub enum RobustMode {
 /// Solver configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MicOptions {
+    /// Engine selection: exact only, GEOS fallback only, or exact then GEOS.
     pub engine: MicEngine,
+    /// Robustness mode: filtered adds candidate filtering and a tighter GEOS tolerance.
     pub robust_mode: RobustMode,
+    /// Use a BVH instead of a uniform grid for nearest-boundary queries.
     pub use_bvh: bool,
+    /// Reserved and unused; batch parallel solves are provided by
+    /// [`maximum_inscribed_circle_slice`].
     pub use_parallel: bool,
 }
 
@@ -57,48 +62,73 @@ impl Default for MicOptions {
 /// Engine that produced the final result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MicUsedEngine {
+    /// The native exact solver produced the circle.
     Exact,
+    /// The grid solver produced the circle.
     Grid,
+    /// The GEOS fallback produced the circle.
     GeosFallback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Solver path that produced the result.
 pub enum MicApproach {
+    /// Analytical incenter fast path for a triangular ring.
     FastTriangle,
+    /// Fast path for an axis-aligned rectangular ring.
     FastRectangle,
+    /// Chebyshev-center fast path for a convex quadrilateral ring.
     FastConvexQuad,
+    /// Fast path for a convex n-gon, solved by half-plane feasibility search.
     FastConvexN,
+    /// Uniform grid search over interior cell centers.
     GridSolver,
+    /// Exact candidate enumeration over segment and vertex Voronoi sites.
     VoronoiExact,
+    /// GEOS maximum inscribed circle fallback.
     GeosFallback,
 }
 
 /// MIC solve result.
 #[derive(Debug, Clone)]
 pub struct MicResult {
+    /// Circle center point.
     pub center: Point<f64>,
+    /// Circle radius in input coordinate units.
     pub radius: f64,
+    /// Squared radius, radius * radius.
     pub radius_sq: f64,
+    /// Indices of the boundary segments the circle touches.
     pub support_segments: Vec<usize>,
+    /// Number of candidate centers evaluated during the solve.
     pub candidate_count: usize,
+    /// Engine that produced this result.
     pub used_engine: MicUsedEngine,
+    /// Index of the multipolygon component that holds the circle, if any.
     pub component_index: Option<usize>,
+    /// Solver path that produced this result.
     pub approach: MicApproach,
 }
 
 /// MIC solver error.
 #[derive(Debug, Error)]
 pub enum MicError {
+    /// Input polygon is malformed, empty, or degenerate.
     #[error("invalid polygon input: {0}")]
     InvalidInput(String),
+    /// No valid candidate center was found.
     #[error("no valid MIC candidate found")]
     NoCircleFound,
+    /// The exact solver failed.
     #[error("exact MIC solver failed: {0}")]
     ExactFailed(String),
+    /// The GEOS fallback was requested but the `geos` feature is disabled.
     #[error("GEOS fallback feature is not enabled")]
     GeosFeatureDisabled,
+    /// The GEOS fallback failed.
     #[error("GEOS fallback failed: {0}")]
     GeosFailed(String),
+    /// The GEOS result could not be parsed into a circle.
     #[error("unsupported GEOS MIC output: {0}")]
     UnsupportedGeosOutput(String),
 }

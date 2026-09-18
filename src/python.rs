@@ -60,20 +60,28 @@ pub fn guard<T>(f: impl FnOnce() -> PyResult<T> + std::panic::UnwindSafe) -> PyR
 
 #[pyclass]
 #[derive(Clone)]
+/// MIC solve result exposed to Python callers.
 pub struct PyMicResult {
     #[pyo3(get)]
+    /// Circle center x coordinate.
     pub center_x: f64,
     #[pyo3(get)]
+    /// Circle center y coordinate.
     pub center_y: f64,
     #[pyo3(get)]
+    /// Circle radius in input coordinate units.
     pub radius: f64,
     #[pyo3(get)]
+    /// Squared radius, radius * radius.
     pub radius_sq: f64,
     #[pyo3(get)]
+    /// Name of the engine that produced the result.
     pub used_engine: String,
     #[pyo3(get)]
+    /// Number of candidate centers evaluated during the solve.
     pub candidate_count: usize,
     #[pyo3(get)]
+    /// Index of the multipolygon component that holds the circle, if any.
     pub component_index: Option<usize>,
 }
 
@@ -119,6 +127,7 @@ fn check_geos(engine: MicEngine) -> PyResult<()> {
 }
 
 #[pyfunction(signature = (exterior, holes=None, engine=None, robust_mode=None))]
+/// Solve MIC for one polygon given as an exterior ring plus optional holes.
 pub fn solve_mic_py(
     exterior: Vec<(f64, f64)>,
     holes: Option<Vec<Vec<(f64, f64)>>>,
@@ -149,6 +158,7 @@ pub fn solve_mic_py(
 }
 
 #[pyfunction(signature = (polygons, engine=None, robust_mode=None))]
+/// Solve MIC across several polygons and return the best component circle.
 pub fn solve_mic_multipolygon_py(
     polygons: Vec<MicPolygonInput>,
     engine: Option<&str>,
@@ -182,6 +192,7 @@ pub fn solve_mic_multipolygon_py(
     })
 }
 
+/// Register the result class and the solver functions with the module.
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = py;
     m.add_class::<PyMicResult>()?;

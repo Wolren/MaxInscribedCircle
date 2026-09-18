@@ -1,3 +1,5 @@
+//! Nearest-boundary distance queries over a segment table, backed by a
+//! uniform grid or, when requested, a flat BVH.
 use super::super::input::SegmentIndex;
 use super::bvh::FlatBvh;
 
@@ -422,6 +424,7 @@ pub struct NearestBoundaryIndex {
 }
 
 impl NearestBoundaryIndex {
+    /// Build the index over `segments`, using a BVH when `use_bvh` is true.
     pub fn new(segments: SegmentIndex, use_bvh: bool) -> Self {
         if use_bvh {
             let bvh = FlatBvh::new(&segments);
@@ -441,11 +444,13 @@ impl NearestBoundaryIndex {
     }
 
     #[inline]
+    /// The segment table the index was built from.
     pub fn segments(&self) -> &SegmentIndex {
         &self.segments
     }
 
     #[inline]
+    /// Squared distance to the closest boundary and its segment index, if any.
     pub fn nearest_distance_sq(&self, x: f64, y: f64) -> Option<(f64, usize)> {
         if let Some(bvh) = &self.bvh {
             return bvh.nearest_distance_sq(&self.segments, x, y);
@@ -473,6 +478,7 @@ impl NearestBoundaryIndex {
         grid.nearest_via_grid(&self.segments, x, y)
     }
 
+    /// Indices of segments within `min_dist_sq + eps` of point (x, y).
     pub fn supporting_segments(&self, x: f64, y: f64, min_dist_sq: f64, eps: f64) -> Vec<usize> {
         let max_dist_sq = min_dist_sq + eps.abs().max(1e-14);
         if let Some(bvh) = &self.bvh {

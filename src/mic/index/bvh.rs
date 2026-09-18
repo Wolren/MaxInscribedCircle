@@ -1,3 +1,4 @@
+//! Flat BVH used for nearest-boundary queries when `use_bvh` is set.
 use super::super::input::SegmentIndex;
 
 /// Flat BVH (Bounding Volume Hierarchy) for nearest-boundary queries.

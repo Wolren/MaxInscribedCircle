@@ -14,7 +14,8 @@
 //! mis-solved.
 
 use super::mic::{
-    maximum_inscribed_circle, maximum_inscribed_circle_multipolygon, MicError, MicOptions, MicResult,
+    maximum_inscribed_circle, maximum_inscribed_circle_multipolygon, MicError, MicOptions,
+    MicResult,
 };
 use geo_traits::to_geo::ToGeoPolygon;
 use geo_traits::{GeometryTrait, PolygonTrait};

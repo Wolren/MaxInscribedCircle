@@ -17,19 +17,26 @@ use std::slice;
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct HoleInput {
+    /// Flat [x0, y0, x1, y1, ...] hole ring coordinates, or null when unused.
     pub coords: *const c_double,
+    /// Number of doubles in `coords`; even and at least 6.
     pub coords_len: size_t,
 }
 
 /// MIC result.
 #[repr(C)]
 pub struct MicResultC {
+    /// Circle center x coordinate.
     pub center_x: c_double,
+    /// Circle center y coordinate.
     pub center_y: c_double,
+    /// Circle radius in input coordinate units.
     pub radius: c_double,
+    /// Squared radius, radius * radius.
     pub radius_sq: c_double,
     /// 0 = exact, 1 = geos fallback, 2 = grid.
     pub used_engine: c_int,
+    /// Number of candidate centers evaluated during the solve.
     pub candidate_count: size_t,
     /// -1 when not a multipolygon solve.
     pub component_index: c_int,
@@ -58,9 +65,13 @@ impl Default for MicOptionsC {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MicPolyInput {
+    /// Flat [x0, y0, x1, y1, ...] exterior ring coordinates.
     pub coords: *const c_double,
+    /// Number of doubles in `coords`; even and at least 6.
     pub coords_len: size_t,
+    /// Pointer to `holes_len` hole rings, or null for no holes.
     pub holes: *const HoleInput,
+    /// Number of entries in `holes`; ignored when `holes` is null.
     pub holes_len: size_t,
 }
 
@@ -261,6 +272,7 @@ pub unsafe extern "C" fn mic_solve_multipolygon(
 }
 
 #[no_mangle]
+/// Return the default C ABI options: exact-then-GEOS engine, filtered mode.
 pub extern "C" fn mic_options_default() -> MicOptionsC {
     MicOptionsC::default()
 }

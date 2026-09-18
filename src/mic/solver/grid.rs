@@ -1,3 +1,4 @@
+//! Grid solver: samples interior cell centers and refines the best one.
 use std::collections::BinaryHeap;
 
 use super::super::index::{NearestBoundaryIndex, PipIndex};
@@ -40,6 +41,7 @@ impl Ord for GridCell {
 }
 
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
+/// Sample interior cell centers on a uniform grid and refine the best circle.
 pub fn solve_grid(
     host: &HostPolygon,
     pip: &PipIndex,
@@ -237,6 +239,7 @@ fn compute_max_iterations(host: &HostPolygon, tolerance: f64) -> usize {
 }
 
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
+/// True when the polygon has a single, strictly convex exterior ring.
 pub fn is_convex_polygon(host: &HostPolygon) -> bool {
     if host.ring_count() > 1 {
         return false;
@@ -272,11 +275,13 @@ pub fn is_convex_polygon(host: &HostPolygon) -> bool {
 }
 
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
+/// True when any ring of the polygon is a hole.
 pub fn has_holes(host: &HostPolygon) -> bool {
     host.rings.iter().any(|r| r.is_hole)
 }
 
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
+/// True when the polygon is convex and has no holes.
 pub fn is_simple_shape(host: &HostPolygon) -> bool {
     is_convex_polygon(host) && !has_holes(host)
 }
