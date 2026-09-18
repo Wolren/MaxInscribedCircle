@@ -141,10 +141,6 @@ pub fn solve_grid(
         }
     }
 
-    if !found {
-        return None;
-    }
-
     let mut iterations = 0usize;
 
     while let Some(cell) = queue.pop() {
@@ -152,8 +148,10 @@ pub fn solve_grid(
 
         // The heap is ordered by the bound, so once the best remaining cell
         // cannot beat the incumbent by more than the tolerance, no cell can.
+        // With no incumbent yet there is nothing to compare against, so the
+        // search continues and the first interior centre becomes the incumbent.
         let radius_bound = best_dist + tolerance;
-        if cell.max_dist <= radius_bound {
+        if found && cell.max_dist <= radius_bound {
             break;
         }
 
@@ -185,6 +183,12 @@ pub fn solve_grid(
                 best_x = cx;
                 best_y = cy;
                 best_dist = d;
+                // The seed row can miss the polygon entirely when the shape is
+                // thinner than the first cell. The refinement is what finds the
+                // interior then, so an interior centre seen here counts as an
+                // incumbent: without this the bound test never engages and the
+                // search refines the whole box down to the tolerance.
+                found = true;
             }
             queue.push(GridCell {
                 x: cx,
@@ -197,7 +201,13 @@ pub fn solve_grid(
     }
 
     // Measure, do not trust: the radius handed to the caller is the true
-    // distance to the nearest segment of this polygon at this centre.
+    // distance to the nearest segment of this polygon at this centre. Without
+    // an incumbent there is no centre to measure, and the seeds covered the
+    // box, so the only way to get here is a polygon with no interior point at
+    // all, which the exact stage reports on.
+    if !found {
+        return None;
+    }
     let segments = nb.segments();
     let radius_sq = segments.batch_point_segment_distance_sq(best_x, best_y, 0, segments.len());
     if !radius_sq.is_finite() {
