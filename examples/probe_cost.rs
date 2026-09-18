@@ -196,4 +196,70 @@ fn main() {
         seq_ms / par_ms
     );
     println!("identical results {same}");
+
+    // How each stage scales with the vertex count. Regular n-gons have an
+    // isolated optimum at the centre, so this measures the stages themselves
+    // rather than the shape of the optimum.
+    let regular = |n: usize, r: f64| -> Polygon<f64> {
+        let pts: Vec<(f64, f64)> = (0..n)
+            .map(|i| {
+                let a = 2.0 * std::f64::consts::PI * i as f64 / n as f64;
+                (r * a.cos(), r * a.sin())
+            })
+            .collect();
+        poly(&pts)
+    };
+
+    println!("\n=== vertex count sweep, regular n-gons of radius 10 ===");
+    println!(
+        "{:>6} {:>12} {:>11} {:>10} {:>11} {:>10} {:>10} {:>11} {:>9}",
+        "verts",
+        "true radius",
+        "ws ms",
+        "exact ms",
+        "exact rel",
+        "grid ms",
+        "grid cells",
+        "full ms",
+        "engine"
+    );
+    for n in [4usize, 8, 16, 32, 64, 128, 256, 512, 1024] {
+        let p = regular(n, 10.0);
+        let host = HostPolygon::from_polygon(&p).expect("host");
+        let tol = grid_tolerance(&host);
+
+        let t = Instant::now();
+        let mut ws = MicWorkspace::new(host.clone(), false).expect("workspace");
+        let ws_ms = ms(t);
+
+        let t = Instant::now();
+        let ex = solve_exact(&mut ws, &opts).ok();
+        let exact_ms = ms(t);
+
+        let t = Instant::now();
+        let gr = solve_grid(&host, &ws.pip_index, &ws.nb_index, tol);
+        let grid_ms = ms(t);
+
+        let t = Instant::now();
+        let full = maximum_inscribed_circle(&p, &opts).expect("full");
+        let full_ms = ms(t);
+
+        let truth = 10.0 * (std::f64::consts::PI / n as f64).cos();
+        let exact_rel = ex
+            .as_ref()
+            .map(|r| (r.radius - truth) / truth)
+            .unwrap_or(f64::NAN);
+        println!(
+            "{:>6} {:>12.9} {:>11.2} {:>10.2} {:>11.2e} {:>10.2} {:>10} {:>11.2} {:>9?}",
+            n,
+            truth,
+            ws_ms,
+            exact_ms,
+            exact_rel,
+            grid_ms,
+            gr.as_ref().map(|r| r.candidate_count).unwrap_or(0),
+            full_ms,
+            full.used_engine
+        );
+    }
 }
