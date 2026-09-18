@@ -10,6 +10,7 @@ pub mod input;
 pub mod solver;
 pub mod workspace;
 
+use crate::tuning;
 use geo_types::{MultiPolygon, Point, Polygon};
 use rayon::prelude::*;
 use thiserror::Error;
@@ -210,24 +211,31 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
         } else {
             None
         };
-        if let Some(result) = result {
-            // Triangle and rectangle are exact - no verification needed.
-            if outer_len <= 4 {
-                return Ok(result);
-            }
-            // Convex quad: verify because the convexity check can be fooled by
-            // nearly-collinear edges in real-world data.
+        if let Some(mut result) = result {
+            // Every radius this function returns is the distance the segment
+            // table reports at the returned centre, so the reported circle
+            // always fits. The fast paths solve the shape class they recognise;
+            // this measurement confirms the polygon really is that class,
+            // because near-collinear reflex vertices in real data can fool the
+            // convexity tests. A shape that only looks like the class falls
+            // through to the grid instead of returning a radius it cannot
+            // support.
             let seg_idx = input::SegmentIndex::from_host(host);
-            let mut actual_sq = f64::INFINITY;
-            for idx in 0..seg_idx.len() {
-                let d =
-                    seg_idx.point_segment_distance_sq(idx, result.center.x(), result.center.y());
-                if d < actual_sq {
-                    actual_sq = d;
-                }
-            }
-            let actual = actual_sq.sqrt();
-            if actual > 0.0 && (result.radius - actual).abs() / actual < 0.01 {
+            let actual_sq = seg_idx.batch_point_segment_distance_sq(
+                result.center.x(),
+                result.center.y(),
+                0,
+                seg_idx.len(),
+            );
+            let actual = actual_sq.max(0.0).sqrt();
+            let relative = if actual > 0.0 {
+                (result.radius - actual).abs() / actual
+            } else {
+                f64::INFINITY
+            };
+            if relative <= tuning::MIC_FAST_PATH_REL_TOL {
+                result.radius = actual;
+                result.radius_sq = actual_sq;
                 return Ok(result);
             }
         }
@@ -248,14 +256,24 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
     run_exact(host, opts)
 }
 
-/// Tolerance the grid stage refines to on a host polygon: `max(diag * 1e-7, 1e-12)`.
+/// Absolute refinement tolerance for the grid stage on a host polygon:
+/// `diag * 1e-7`, where `diag` is the bounding box diagonal as it stands.
 ///
 /// Exposed so a comparison harness can hand another solver the same tolerance
 /// the native pipeline uses, instead of comparing solvers at mixed tolerances.
+///
+/// The diagonal carries no floor, because a floor would tie the accuracy of the
+/// answer to the coordinate units of the input: a polygon a few hundred metres
+/// wide stored in degrees has a diagonal near `1e-3`, so a floor of one unit
+/// makes the tolerance a whole percent of its own inscribed radius and the
+/// answer stops meaning anything. Scale invariance here means the same polygon
+/// in degrees and in metres converges to the same circle.
 pub fn grid_tolerance(host: &HostPolygon) -> f64 {
-    let bounds = host.bounds().unwrap_or((0.0, 0.0, 1.0, 1.0));
-    let diag = (bounds.2 - bounds.0).hypot(bounds.3 - bounds.1).max(1.0);
-    (diag * 1e-7).max(1e-12)
+    let Some((min_x, min_y, max_x, max_y)) = host.bounds() else {
+        return 0.0;
+    };
+    let diag = (max_x - min_x).hypot(max_y - min_y);
+    diag * 1e-7
 }
 
 fn run_exact(host: &HostPolygon, opts: &MicOptions) -> Result<MicResult, MicError> {

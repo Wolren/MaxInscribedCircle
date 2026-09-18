@@ -273,7 +273,7 @@ pub fn solve_exact(
         support_segments,
         candidate_count,
         used_engine: MicUsedEngine::Exact,
-        approach: MicApproach::FastRectangle,
+        approach: MicApproach::VoronoiExact,
         component_index: None,
     })
 }
@@ -316,7 +316,7 @@ pub fn fast_triangle(host: &HostPolygon) -> Option<MicResult> {
         support_segments: vec![],
         candidate_count: 1,
         used_engine: MicUsedEngine::Exact,
-        approach: MicApproach::FastConvexQuad,
+        approach: MicApproach::FastTriangle,
         component_index: None,
     })
 }
@@ -371,7 +371,7 @@ pub fn fast_rectangle(host: &HostPolygon) -> Option<MicResult> {
         support_segments: vec![],
         candidate_count: 1,
         used_engine: MicUsedEngine::Exact,
-        approach: MicApproach::FastConvexN,
+        approach: MicApproach::FastRectangle,
         component_index: None,
     })
 }
@@ -577,7 +577,7 @@ pub fn fast_convex_quad(host: &HostPolygon) -> Option<MicResult> {
         support_segments: vec![],
         candidate_count: 1,
         used_engine: MicUsedEngine::Exact,
-        approach: MicApproach::FastTriangle,
+        approach: MicApproach::FastConvexQuad,
         component_index: None,
     })
 }
@@ -693,7 +693,7 @@ pub fn fast_convex_n(host: &HostPolygon) -> Option<MicResult> {
         support_segments: vec![],
         candidate_count: 1,
         used_engine: MicUsedEngine::Exact,
-        approach: MicApproach::FastRectangle,
+        approach: MicApproach::FastConvexN,
         component_index: None,
     })
 }
