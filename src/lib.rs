@@ -64,17 +64,15 @@
 //! |---------|--------|
 //! | `bench-geos` | comparison only: links the GEOS C library so benchmarks can compare solvers |
 //! | `geo-traits` | generic solves over any `geo_traits` polygon, plus `geo_types::Geometry` dispatch |
-//! | `shewchuk` | reserved: swaps the ray-casting containment index for the `winding_index` stub, which reports every query point as inside |
+//! | `shewchuk` | exact `orient2d` predicates from the `robust` crate in the containment and orientation tests |
+//! | `simd` | 4-lane batched segment distance via the stable `wide` crate |
+//! | `hotpath` | `#[hotpath::measure]` instrumentation on the solver entry points |
 //! | `python` | PyO3 extension module named `max_inscribed_circle` |
 //! | `extension-module` | build the Python module as an importable extension |
 //!
 //! Default features are empty. The `bench-geos` feature links against the GEOS
 //! C library, and its build script expects `GEOS_LIB_DIR` and `GEOS_VERSION`
 //! when GEOS cannot be found through `pkg-config`.
-//!
-//! The `shewchuk` feature is carried over from IGE and is not usable yet: its
-//! containment index is a stub, so point-in-polygon tests answer true for every
-//! query point.
 //!
 //! # C ABI
 //!
@@ -89,7 +87,6 @@
 pub mod ffi;
 pub mod mic;
 pub mod tuning;
-pub mod winding_index;
 
 #[cfg(feature = "python")]
 #[cfg_attr(docsrs, doc(cfg(feature = "python")))]

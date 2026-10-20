@@ -37,9 +37,14 @@ pub struct HostPolygon {
 }
 
 impl HostPolygon {
-    /// Flatten a `geo_types` polygon into rings, rejecting zero-area input.
+    /// Flatten a `geo_types` polygon into rings, rejecting non-finite
+    /// coordinates and zero-area input.
     pub fn from_polygon(poly: &Polygon<f64>) -> Result<Self, MicError> {
-        // NO normalization - use original polygon coordinates directly to avoid any geometry alteration
+        // Coordinates are used as given, never normalized, so a caller's
+        // geometry is solved exactly as supplied. Non-finite values are
+        // rejected here because they poison every distance comparison: a NaN
+        // never compares greater, so the search keeps an incumbent of zero and
+        // returns a circle that has nothing to do with the input.
         let mut coords = Vec::new();
         let mut rings = Vec::with_capacity(1 + poly.interiors().len());
 
@@ -65,6 +70,15 @@ impl HostPolygon {
                 end,
                 is_hole: true,
             });
+        }
+
+        if coords
+            .iter()
+            .any(|c| !c[0].is_finite() || !c[1].is_finite())
+        {
+            return Err(MicError::InvalidInput(
+                "polygon has a NaN or infinite coordinate".to_string(),
+            ));
         }
 
         if poly.unsigned_area() <= NORMALIZE_EPS {
@@ -293,8 +307,7 @@ impl SegmentIndex {
         start: usize,
         end: usize,
     ) -> f64 {
-        use std::simd::f64x4;
-        use std::simd::num::SimdFloat;
+        use wide::f64x4;
 
         let x = f64x4::splat(px);
         let y = f64x4::splat(py);
@@ -303,23 +316,21 @@ impl SegmentIndex {
 
         let mut i = start;
         while i + 4 <= end {
-            let ax =
-                f64x4::from_array([self.ax[i], self.ax[i + 1], self.ax[i + 2], self.ax[i + 3]]);
-            let ay =
-                f64x4::from_array([self.ay[i], self.ay[i + 1], self.ay[i + 2], self.ay[i + 3]]);
-            let dx = f64x4::from_array([
+            let ax = f64x4::from([self.ax[i], self.ax[i + 1], self.ax[i + 2], self.ax[i + 3]]);
+            let ay = f64x4::from([self.ay[i], self.ay[i + 1], self.ay[i + 2], self.ay[i + 3]]);
+            let dx = f64x4::from([
                 self.dir_x[i],
                 self.dir_x[i + 1],
                 self.dir_x[i + 2],
                 self.dir_x[i + 3],
             ]);
-            let dy = f64x4::from_array([
+            let dy = f64x4::from([
                 self.dir_y[i],
                 self.dir_y[i + 1],
                 self.dir_y[i + 2],
                 self.dir_y[i + 3],
             ]);
-            let ls = f64x4::from_array([
+            let ls = f64x4::from([
                 self.len_sq[i],
                 self.len_sq[i + 1],
                 self.len_sq[i + 2],
@@ -327,14 +338,14 @@ impl SegmentIndex {
             ]);
 
             let t = ((x - ax) * dx + (y - ay) * dy) / ls;
-            let t = t.simd_clamp(f64x4::splat(0.0), f64x4::splat(1.0));
+            let t = t.max(f64x4::ZERO).min(f64x4::ONE);
             let pdx = ax + t * dx;
             let pdy = ay + t * dy;
             let edx = x - pdx;
             let edy = y - pdy;
             let dist_sq = edx * edx + edy * edy;
 
-            best = best.min(dist_sq.reduce_min());
+            best = best.min(dist_sq.to_array().into_iter().fold(f64::INFINITY, f64::min));
             i += 4;
         }
 
@@ -371,8 +382,7 @@ impl SegmentIndex {
         start: usize,
         end: usize,
     ) -> (f64, usize) {
-        use std::simd::f64x4;
-        use std::simd::num::SimdFloat;
+        use wide::f64x4;
 
         let x = f64x4::splat(px);
         let y = f64x4::splat(py);
@@ -382,23 +392,21 @@ impl SegmentIndex {
 
         let mut i = start;
         while i + 4 <= end {
-            let ax =
-                f64x4::from_array([self.ax[i], self.ax[i + 1], self.ax[i + 2], self.ax[i + 3]]);
-            let ay =
-                f64x4::from_array([self.ay[i], self.ay[i + 1], self.ay[i + 2], self.ay[i + 3]]);
-            let dx = f64x4::from_array([
+            let ax = f64x4::from([self.ax[i], self.ax[i + 1], self.ax[i + 2], self.ax[i + 3]]);
+            let ay = f64x4::from([self.ay[i], self.ay[i + 1], self.ay[i + 2], self.ay[i + 3]]);
+            let dx = f64x4::from([
                 self.dir_x[i],
                 self.dir_x[i + 1],
                 self.dir_x[i + 2],
                 self.dir_x[i + 3],
             ]);
-            let dy = f64x4::from_array([
+            let dy = f64x4::from([
                 self.dir_y[i],
                 self.dir_y[i + 1],
                 self.dir_y[i + 2],
                 self.dir_y[i + 3],
             ]);
-            let ls = f64x4::from_array([
+            let ls = f64x4::from([
                 self.len_sq[i],
                 self.len_sq[i + 1],
                 self.len_sq[i + 2],
@@ -406,23 +414,20 @@ impl SegmentIndex {
             ]);
 
             let t = ((x - ax) * dx + (y - ay) * dy) / ls;
-            let t = t.simd_clamp(f64x4::splat(0.0), f64x4::splat(1.0));
+            let t = t.max(f64x4::ZERO).min(f64x4::ONE);
             let pdx = ax + t * dx;
             let pdy = ay + t * dy;
             let edx = x - pdx;
             let edy = y - pdy;
             let dist_sq = edx * edx + edy * edy;
+            let lanes = dist_sq.to_array();
 
-            let batch_min = dist_sq.reduce_min();
-            if batch_min < best_dist {
-                best_dist = batch_min;
-                // Find which lane has the minimum
-                for lane in 0..4 {
-                    let d = dist_sq[lane];
-                    if d < best_dist {
-                        best_dist = d;
-                        best_idx = i + lane;
-                    }
+            // Scan the four lanes against the incumbent, not against the lane
+            // minimum, so the reported index is the one that holds the distance.
+            for (lane, d) in lanes.iter().enumerate() {
+                if *d < best_dist {
+                    best_dist = *d;
+                    best_idx = i + lane;
                 }
             }
             i += 4;

@@ -20,6 +20,13 @@ use crate::tuning::{
 
 const CANDIDATE_QUANTIZE: f64 = MIC_CANDIDATE_QUANTIZE;
 
+/// Refinement stops once the branch bound is within this fraction of the diagonal.
+const DET_REFINE_TOL: f64 = 1e-6;
+/// Cells the global refinement may pop before it keeps the best found.
+const DET_REFINE_ITERS: usize = 400_000;
+/// Refinement seed density per axis, finer than the grid stage.
+const MIC_REFINE_CELLS_PER_AXIS: usize = 64;
+
 // Baseline caps for simple (convex, few segments) polygons.
 const BASE_TRIPLE_CAP: usize = MIC_BASE_TRIPLE_CAP;
 const BASE_SS_SEG_CAP: usize = MIC_BASE_SS_SEG_CAP;
@@ -148,14 +155,14 @@ pub fn solve_exact(
 
     // Compute adaptive caps based on polygon complexity.
     let hole_count = workspace.host.rings.iter().filter(|r| r.is_hole).count();
-    let reflex_count = count_reflex_vertices(&workspace.host, &workspace.nb_index.segments());
+    let reflex_count = count_reflex_vertices(&workspace.host, workspace.nb_index.segments());
     let seg_count = workspace.nb_index.segments().len();
     let (triple_cap, ss_seg_cap, ss_vert_cap, segs_per_ring) =
         caps_for(seg_count, hole_count, reflex_count);
 
     // 4. Segment-triple incenters - reflex-biased sampling (Gap B)
     generate_segment_triple_candidates(
-        &workspace.nb_index.segments(),
+        workspace.nb_index.segments(),
         &workspace.host,
         &mut seen,
         &mut workspace.candidate_buf,
@@ -186,9 +193,9 @@ pub fn solve_exact(
 
     // 7. Filtered: seg-seg-vertex bisector candidates + vertex-triple circumcenters
     if matches!(opts.robust_mode, RobustMode::Filtered) {
-        let lines = precompute_segment_lines(&workspace.nb_index.segments());
+        let lines = precompute_segment_lines(workspace.nb_index.segments());
         generate_ssv_candidates(
-            &workspace.nb_index.segments(),
+            workspace.nb_index.segments(),
             &lines,
             &vertices,
             &mut seen,
@@ -244,22 +251,32 @@ pub fn solve_exact(
         .map(|i| candidate_buf[i].clone())
         .ok_or(MicError::NoCircleFound)?;
 
-    // Phase 4: Quadtree refinement from best candidate.
-    // Closes the gap between discrete candidate optimum and true MIC.
-    let (min_x, min_y, max_x, max_y) = workspace.host.bounds().unwrap_or((0.0, 0.0, 1.0, 1.0));
-    let diameter = (max_x - min_x).hypot(max_y - min_y).max(1.0);
-    let refine_tol = diameter * 1e-6;
-    let seed_h = best.radius_sq.sqrt().max(1e-12) * 0.5;
+    // Phase 4: tiled branch-and-bound refinement over the whole bounding box.
+    //
+    // The seed tiles the box rather than a neighbourhood of the incumbent. A
+    // local seed only ever confirms the candidate the enumeration already
+    // found, so a basin the enumeration missed stays missed and the answer
+    // comes back short. `MIC_REFINE_CELLS_PER_AXIS` is finer than the grid
+    // stage's seed because this pass has no second chance behind it.
+    let bounds = workspace.host.bounds().unwrap_or((0.0, 0.0, 1.0, 1.0));
+    let diameter = (bounds.2 - bounds.0).hypot(bounds.3 - bounds.1).max(1.0);
+    let refine_tol = diameter * DET_REFINE_TOL;
     let (ref_x, ref_y, ref_r) = quadtree_search(
-        best.x,
-        best.y,
-        best.radius_sq.sqrt(),
-        seed_h,
+        bounds,
         pip_index,
         nb_index,
         refine_tol,
-        100,
+        DET_REFINE_ITERS,
+        MIC_REFINE_CELLS_PER_AXIS,
     );
+
+    // Refinement may only improve. A bounded global search can still come back
+    // below the enumeration when the budget runs out, so keep the better one.
+    let (ref_x, ref_y, ref_r) = if ref_r >= best.radius_sq.sqrt() {
+        (ref_x, ref_y, ref_r)
+    } else {
+        (best.x, best.y, best.radius_sq.sqrt())
+    };
 
     let center = Point::new(ref_x, ref_y);
     let ref_r_sq = ref_r * ref_r;
@@ -806,11 +823,7 @@ fn sample_segments_ring_aware(
 
     // Allocate: min_per_ring guaranteed, remainder by segment count
     let guaranteed = min_per_ring * num_rings;
-    let remaining = if max_total > guaranteed {
-        max_total - guaranteed
-    } else {
-        0
-    };
+    let remaining = max_total.saturating_sub(guaranteed);
 
     let mut result = Vec::with_capacity(max_total);
     for ri in 0..num_rings {
@@ -841,6 +854,9 @@ fn sample_segments_ring_aware(
 // Segment-triple incenter candidates (segment-segment-segment Voronoi vertices)
 // ---------------------------------------------------------------------------
 
+/// Triple index loops read two parallel arrays, so an index is clearer than a
+/// zipped iterator over pairs.
+#[allow(clippy::needless_range_loop)]
 fn generate_segment_triple_candidates(
     seg_index: &SegmentIndex,
     host: &HostPolygon,
@@ -957,6 +973,7 @@ fn precompute_segment_lines(seg_index: &SegmentIndex) -> Vec<SegmentLine> {
 // segment-triple (3 segments) or CDT (3 vertices).
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 fn generate_ssv_candidates(
     seg_index: &SegmentIndex,
     lines: &[SegmentLine],
@@ -1051,6 +1068,8 @@ fn generate_ssv_candidates(
 // CDT Voronoi vertex generator (constrained Delaunay triangulation)
 // ---------------------------------------------------------------------------
 
+/// The loop indexes vertices and inserts them into the triangulation in order.
+#[allow(clippy::needless_range_loop)]
 fn generate_cdt_candidates(
     host: &HostPolygon,
     seen: &mut FxHashSet<(i64, i64)>,
@@ -1161,7 +1180,7 @@ impl PartialEq for QuadCell {
 impl Eq for QuadCell {}
 impl PartialOrd for QuadCell {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.3.partial_cmp(&other.3).map(|o| o.reverse())
+        Some(self.cmp(other))
     }
 }
 impl Ord for QuadCell {
@@ -1173,24 +1192,79 @@ impl Ord for QuadCell {
     }
 }
 
-/// Run quadtree refinement with configurable iteration budget.
-/// `seed_h`: initial cell half-side. For refinement (tight seed, ~best_r/2).
-/// For primary solve (wide seed, ~diameter/4).
+/// Branch-and-bound refinement over a tiled seed, then bisection down to `tol`.
+///
+/// One root cell only descends into the quadrant it sits in, so a ridge that
+/// runs along a boundary stays unreachable no matter how long it searches. The
+/// seeds tile the whole box at `MIC_GRID_SIDE` cells per axis, which is the
+/// same coverage the grid stage gets, and the bound then prunes.
 fn quadtree_search(
-    init_x: f64,
-    init_y: f64,
-    init_r: f64,
-    seed_h: f64,
+    bounds: (f64, f64, f64, f64),
     pip: &super::super::index::PipIndex,
     nb: &NearestBoundaryIndex,
     tol: f64,
     max_iters: usize,
+    cells_per_axis: usize,
 ) -> (f64, f64, f64) {
-    let mut queue: BinaryHeap<QuadCell> = BinaryHeap::new();
-    queue.push(QuadCell(init_x, init_y, seed_h, init_r + seed_h * SQRT_2));
-    let mut best_x = init_x;
-    let mut best_y = init_y;
-    let mut best_r = init_r;
+    let (min_x, min_y, max_x, max_y) = bounds;
+    let width = max_x - min_x;
+    let height = max_y - min_y;
+    let span = width.max(height);
+    if span <= 0.0 || !tol.is_finite() || tol <= 0.0 {
+        return (min_x, min_y, 0.0);
+    }
+
+    let h_size = span / (2.0 * cells_per_axis as f64);
+    let step = 2.0 * h_size;
+    let cells_x = ((width / step).ceil() as usize).max(1);
+    let cells_y = ((height / step).ceil() as usize).max(1);
+
+    let mut queue: BinaryHeap<QuadCell> = BinaryHeap::with_capacity(cells_x * cells_y);
+    let mut best_x = min_x;
+    let mut best_y = min_y;
+    let mut best_r = 0.0;
+
+    // Seed the whole box so every interior point starts inside some cell. The
+    // step comes from the longer axis, so a thin shape gets a single row of
+    // cells taller than the shape and no centre may land inside it. The
+    // fallback below probes a vertical line then, because a seed of radius zero
+    // leaves the bound test loose and the search wanders to its budget.
+    for i in 0..cells_x {
+        let cx = min_x + h_size + i as f64 * step;
+        for j in 0..cells_y {
+            let cy = min_y + h_size + j as f64 * step;
+            let r = nb
+                .nearest_distance_sq(cx, cy)
+                .map(|(d, _)| d.max(0.0).sqrt())
+                .unwrap_or(0.0);
+            if pip.contains_strict_xy(cx, cy) && r > best_r {
+                best_r = r;
+                best_x = cx;
+                best_y = cy;
+            }
+            queue.push(QuadCell(cx, cy, h_size, r + h_size * SQRT_2));
+        }
+    }
+
+    if best_r <= 0.0 {
+        let mid_x = (min_x + max_x) * 0.5;
+        let probes = cells_per_axis * 2;
+        for k in 0..=probes {
+            let py = min_y + height * (k as f64) / (probes as f64);
+            if !pip.contains_strict_xy(mid_x, py) {
+                continue;
+            }
+            if let Some((d, _)) = nb.nearest_distance_sq(mid_x, py) {
+                let r = d.max(0.0).sqrt();
+                if r > best_r {
+                    best_r = r;
+                    best_x = mid_x;
+                    best_y = py;
+                }
+            }
+        }
+    }
+
     let mut iters = 0usize;
     while let Some(QuadCell(cx, cy, h, upper)) = queue.pop() {
         iters += 1;
@@ -1207,14 +1281,14 @@ fn quadtree_search(
         for (dx, dy) in [(-h2, -h2), (h2, -h2), (-h2, h2), (h2, h2)] {
             let nx = cx + dx;
             let ny = cy + dy;
-            if !pip.contains_strict_xy(nx, ny) {
-                continue;
-            }
             let Some((r2, _)) = nb.nearest_distance_sq(nx, ny) else {
                 continue;
             };
             let r = r2.sqrt();
-            if r > best_r {
+            // An outside centre still expands: a child cell can straddle the
+            // boundary and hold the optimum. Only an interior centre can become
+            // the answer, because a circle centred outside does not fit.
+            if pip.contains_strict_xy(nx, ny) && r > best_r {
                 best_r = r;
                 best_x = nx;
                 best_y = ny;

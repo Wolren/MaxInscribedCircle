@@ -29,6 +29,14 @@ pub const MIC_EXT_SEGS_PER_RING: usize = 5;
 /// Half of the first-level cell count of the grid solver: the bounding box is
 /// covered by at most this many cells along its longer axis.
 pub const MIC_GRID_SIDE: usize = 25;
+/// Cells the grid stage may pop before it gives up and returns no answer.
+///
+/// A ridge of equal clearance costs `length / tolerance` cells, so a corridor
+/// 1000 long with a diagonal-scaled tolerance of 1e-4 needs about 1e7. The
+/// budget is set below that: past it the candidate solver answers instead of
+/// the grid spending seconds on a shape it cannot finish. Shapes that converge
+/// normally use tens to hundreds of cells, so this only stops ridges.
+pub const MIC_GRID_CELL_BUDGET: usize = 50_000;
 /// Relative gap above which a fast-path radius counts as unverified. A radius
 /// the segment table does not confirm to this accuracy means the polygon is not
 /// the class the fast path assumed, so the general path has to answer instead.

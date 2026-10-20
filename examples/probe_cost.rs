@@ -121,7 +121,7 @@ fn main() {
         let tol = grid_tolerance(&host);
 
         let t = Instant::now();
-        let mut ws = MicWorkspace::new(host.clone(), false).expect("workspace");
+        let mut ws = MicWorkspace::new(host.clone()).expect("workspace");
         let ws_ms = ms(t);
 
         let t = Instant::now();
@@ -229,7 +229,7 @@ fn main() {
         let tol = grid_tolerance(&host);
 
         let t = Instant::now();
-        let mut ws = MicWorkspace::new(host.clone(), false).expect("workspace");
+        let mut ws = MicWorkspace::new(host.clone()).expect("workspace");
         let ws_ms = ms(t);
 
         let t = Instant::now();

@@ -56,7 +56,7 @@ pub fn guard<T>(f: impl FnOnce() -> PyResult<T> + std::panic::UnwindSafe) -> PyR
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 /// MIC solve result exposed to Python callers.
 pub struct PyMicResult {
@@ -111,8 +111,6 @@ pub fn solve_mic_py(
     guard(|| {
         let polygon = build_polygon(exterior, holes)?;
         let opts = MicOptions {
-            use_bvh: false,
-            use_parallel: false,
             robust_mode: parse_robust(robust_mode)?,
         };
         let r = maximum_inscribed_circle(&polygon, &opts).map_err(core_err)?;
@@ -142,8 +140,6 @@ pub fn solve_mic_multipolygon_py(
         }
         let multi = geo_types::MultiPolygon(polys);
         let opts = MicOptions {
-            use_bvh: false,
-            use_parallel: false,
             robust_mode: robust,
         };
         let r = maximum_inscribed_circle_multipolygon(&multi, &opts).map_err(core_err)?;

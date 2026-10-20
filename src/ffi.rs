@@ -164,8 +164,6 @@ fn fill(r: &super::mic::MicResult, out: *mut MicResultC) -> c_int {
 fn opts_from(raw: MicOptionsC) -> MicOptions {
     MicOptions {
         robust_mode: robust_from(raw.robust_mode),
-        use_bvh: false,
-        use_parallel: false,
     }
 }
 
