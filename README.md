@@ -9,30 +9,14 @@ the circle must clear them too.
 [![Tests](https://img.shields.io/badge/tests-24%20passing-brightgreen.svg)](https://github.com/Wolren/MaxInscribedCircle/actions/workflows/ci.yml)
 [![GEOS](https://img.shields.io/badge/vs%20GEOS-8.56x%20faster-blue.svg)](https://github.com/Wolren/MaxInscribedCircle#performance)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Wolren/MaxInscribedCircle?tab=License-1-ov-file)
-[![Status](https://img.shields.io/badge/status-experimental-orange.svg)]()
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Wolren-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/wolren)
 
 </div>
-
-> **This crate is experimental.** The API is actively evolving: expect
-> breaking changes between 0.x releases. Entry points, result fields, and
-> feature flags are all subject to change.
 
 The maximum inscribed circle is the largest circle that fits inside a polygon.
 Every boundary segment limits it, so an interior ring limits it as well.
 
 The crate is pure Rust. It calls no external solver.
-
-## Install
-
-The crate has no crates.io release yet. Add it as a git dependency:
-
-```toml
-[dependencies]
-max-inscribed-circle = { git = "https://github.com/Wolren/MaxInscribedCircle" }
-```
-
-Rust 1.88 or newer. Default features are empty. The crate links no C library.
 
 ## API
 
