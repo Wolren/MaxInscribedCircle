@@ -6,8 +6,8 @@ Finds the largest circle that fits inside a polygon. Holes act as boundary, so
 the circle must clear them too.
 
 ![MSRV](https://img.shields.io/badge/rustc-1.88+-ab6000.svg)
-[![Tests](https://img.shields.io/badge/tests-24%20passing-brightgreen.svg)](https://github.com/Wolren/MaxInscribedCircle/actions/workflows/ci.yml)
-[![GEOS](https://img.shields.io/badge/vs%20GEOS-8.56x%20faster-blue.svg)](https://github.com/Wolren/MaxInscribedCircle#performance)
+[![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen.svg)](https://github.com/Wolren/MaxInscribedCircle/actions/workflows/ci.yml)
+[![GEOS](https://img.shields.io/badge/vs%20GEOS-8.4x%20faster-blue.svg)](https://github.com/Wolren/MaxInscribedCircle#performance)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Wolren/MaxInscribedCircle?tab=License-1-ov-file)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Wolren-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/wolren)
 
@@ -77,24 +77,28 @@ sides run serially, so the table measures the solver and not the threading.
 
 | Measure | native | GEOS | Ratio |
 |---------|-------:|-----:|------:|
-| total, 290 parcels | **42.3 ms** | 361.8 ms | **8.56x** |
-| per-case median | | | 6.6x |
-| per-case p10 | | | 2.1x |
-| native faster on | 280/290 | | 97% |
+| total, 290 parcels | **41.4 ms** | 347.5 ms | **8.39x** |
+| per-case median | | | 6.3x |
+| per-case p10 | | | 2.0x |
+| per-case p90 | | | 14.2x |
+| native faster on | 279/290 | | 96% |
 
 The margin narrows as vertex count grows.
 
 | Exterior vertices | n | native | GEOS | Ratio |
 |------------------:|--:|-------:|-----:|------:|
-| 0-7 | 42 | 1.96 ms | 30.6 ms | 15.6x |
-| 8-16 | 111 | 16.4 ms | 215 ms | 13.2x |
-| 17-32 | 75 | 8.84 ms | 73.9 ms | 8.35x |
-| 33-64 | 28 | 3.94 ms | 12.9 ms | 3.27x |
-| 129+ | 14 | 6.94 ms | 12.8 ms | 1.84x |
+| 0-7 | 42 | 1.99 ms | 30.6 ms | 15.3x |
+| 8-16 | 111 | 16.7 ms | 226 ms | 13.5x |
+| 17-32 | 75 | 8.95 ms | 74.6 ms | 8.34x |
+| 33-64 | 28 | 4.01 ms | 13.5 ms | 3.36x |
+| 129+ | 14 | 6.91 ms | 13.1 ms | 1.90x |
 
 Pinned to one core the ratio holds at 7.9x. The batch entry point is separate.
 `maximum_inscribed_circle_slice` returns bit-identical results in input order and
 runs 6.1x faster on 12 cores.
+
+Repeat runs of the same tree land between 8.39x and 8.78x, so the second digit is
+noise. Regenerate before quoting a new figure.
 
 Regenerate with
 `cargo run --release --features bench-geos --example compare_apples`. The build
