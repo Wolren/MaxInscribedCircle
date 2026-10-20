@@ -40,6 +40,42 @@ impl NearestBoundaryIndex {
         self.bvh.nearest_distance_sq(&self.segments, x, y)
     }
 
+    /// Nearest distance, or `None` once a segment is proven within `threshold_sq`.
+    ///
+    /// A caller that only needs to know whether a point can beat an incumbent
+    /// stops caring about the exact distance as soon as one segment is closer
+    /// than the bar. `seed` is a nearby segment index to try first, typically
+    /// the support of the parent cell.
+    #[inline]
+    pub fn nearest_distance_sq_above(
+        &self,
+        x: f64,
+        y: f64,
+        threshold_sq: f64,
+        seed: Option<usize>,
+    ) -> Option<(f64, usize)> {
+        if self.segments.is_empty() {
+            return None;
+        }
+        if self.segments.len() <= LINEAR_SCAN_MAX {
+            let mut best = f64::INFINITY;
+            let mut best_idx = 0usize;
+            for seg_idx in 0..self.segments.len() {
+                let d_sq = self.segments.point_segment_distance_sq(seg_idx, x, y);
+                if d_sq <= threshold_sq {
+                    return None;
+                }
+                if d_sq < best {
+                    best = d_sq;
+                    best_idx = seg_idx;
+                }
+            }
+            return Some((best, best_idx));
+        }
+        self.bvh
+            .nearest_distance_sq_above(&self.segments, x, y, threshold_sq, seed)
+    }
+
     /// Indices of segments within `min_dist_sq + eps` of point (x, y).
     pub fn supporting_segments(&self, x: f64, y: f64, min_dist_sq: f64, eps: f64) -> Vec<usize> {
         let max_dist_sq = min_dist_sq + eps.abs().max(1e-14);

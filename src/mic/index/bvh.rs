@@ -84,6 +84,100 @@ impl Bvh {
         Some((best_sq, best_idx))
     }
 
+    /// Nearest distance, or `None` once some segment is proven within `threshold_sq`.
+    ///
+    /// A branch-and-bound caller often does not need the exact distance: it only
+    /// needs to know whether a point can beat an incumbent. Once one segment is
+    /// found closer than that threshold, the point is useless and the exact
+    /// value does not matter, so the descent stops there. This is the difference
+    /// between proving "nothing is closer than the best found" and merely
+    /// finding "something closer than a much looser bar", and it is what makes
+    /// the common, hopeless cell cheap.
+    ///
+    /// `seed` is a segment index known to be near, typically the support of the
+    /// parent cell, whose distance is taken as the starting candidate.
+    #[inline]
+    pub fn nearest_distance_sq_above(
+        &self,
+        segments: &SegmentIndex,
+        x: f64,
+        y: f64,
+        threshold_sq: f64,
+        seed: Option<usize>,
+    ) -> Option<(f64, usize)> {
+        if self.nodes.is_empty() || segments.is_empty() {
+            return None;
+        }
+        let mut best_sq = f64::INFINITY;
+        let mut best_idx = 0usize;
+        if let Some(si) = seed {
+            if si < segments.len() {
+                let d_sq = segments.point_segment_distance_sq(si, x, y);
+                if d_sq <= threshold_sq {
+                    return None;
+                }
+                if d_sq < best_sq {
+                    best_sq = d_sq;
+                    best_idx = si;
+                }
+            }
+        }
+        if self.descend_above(0, segments, x, y, &mut best_sq, &mut best_idx, threshold_sq) {
+            return None;
+        }
+        Some((best_sq, best_idx))
+    }
+
+    /// Returns true when a segment within `threshold_sq` was found.
+    #[allow(clippy::too_many_arguments)]
+    fn descend_above(
+        &self,
+        node_idx: usize,
+        segments: &SegmentIndex,
+        x: f64,
+        y: f64,
+        best_sq: &mut f64,
+        best_idx: &mut usize,
+        threshold_sq: f64,
+    ) -> bool {
+        let node = self.nodes[node_idx];
+        if bbox_dist_sq(&node, x, y) >= *best_sq {
+            return false;
+        }
+        if node.count > 0 {
+            let start = node.left as usize;
+            for &seg in &self.order[start..start + node.count as usize] {
+                let d_sq = segments.point_segment_distance_sq(seg as usize, x, y);
+                if d_sq <= threshold_sq {
+                    return true;
+                }
+                if d_sq < *best_sq {
+                    *best_sq = d_sq;
+                    *best_idx = seg as usize;
+                }
+            }
+            return false;
+        }
+        let left = node.left as usize;
+        let right = node.right as usize;
+        let dl = bbox_dist_sq(&self.nodes[left], x, y);
+        let dr = bbox_dist_sq(&self.nodes[right], x, y);
+        let (first, second) = if dl <= dr {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        if self.descend_above(first, segments, x, y, best_sq, best_idx, threshold_sq) {
+            return true;
+        }
+        if bbox_dist_sq(&self.nodes[second], x, y) < *best_sq
+            && self.descend_above(second, segments, x, y, best_sq, best_idx, threshold_sq)
+        {
+            return true;
+        }
+        false
+    }
+
     /// Indices of every segment within `max_dist_sq` of (x, y).
     pub fn supporting_segments(
         &self,

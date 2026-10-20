@@ -36,6 +36,9 @@ struct GridCell {
     y: f64,
     h_size: f64,
     max_dist: f64,
+    /// Segment that achieves the nearest distance at this cell's centre, used to
+    /// seed the next level's distance query so it starts from a near hit.
+    support: usize,
 }
 
 impl PartialEq for GridCell {
@@ -152,6 +155,7 @@ pub fn solve_grid(
                 y: cy,
                 h_size,
                 max_dist: d + h_size * SQRT2,
+                support: usize::MAX,
             });
         }
     }
@@ -191,12 +195,45 @@ pub fn solve_grid(
             (cell.x + half, cell.y + half),
         ];
 
+        // A child is pruned when `d + half*sqrt(2) <= best + tolerance`, which
+        // rearranges to `d <= best - max(0, half*sqrt(2) - tolerance)`. That
+        // right-hand side is the threshold below which the exact distance no
+        // longer matters: any child centre closer than it is discarded either
+        // way. Asking the index for "the nearest distance, or a value under
+        // this bar" lets the descent stop at the first segment inside the bar
+        // instead of proving the true minimum. This is the technique polylabel
+        // uses, and it makes the common hopeless child far cheaper.
+        let slack = half * SQRT2 - (radius_bound - best_dist);
+        let threshold = if found && slack > 0.0 {
+            Some(best_dist - slack)
+        } else {
+            None
+        };
+
         for (cx, cy) in children {
             // A cell that lies wholly outside the box holds no polygon point.
             if cx + half < min_x || cx - half > max_x || cy + half < min_y || cy - half > max_y {
                 continue;
             }
-            let d = boundary_distance(nb, cx, cy);
+            let (d, support) = match threshold {
+                Some(t) => match nb.nearest_distance_sq_above(
+                    cx,
+                    cy,
+                    (t.max(0.0)) * (t.max(0.0)),
+                    Some(cell.support),
+                ) {
+                    Some(v) => v,
+                    // Proven within the bar: this child cannot improve.
+                    None => continue,
+                },
+                None => {
+                    let Some(v) = nb.nearest_distance_sq(cx, cy) else {
+                        continue;
+                    };
+                    (v.0, v.1)
+                }
+            };
+            let d = d.max(0.0).sqrt();
             let max_dist = d + half * SQRT2;
             // The bound test needs no containment result, so it runs first and
             // most cells never pay for one.
@@ -223,6 +260,7 @@ pub fn solve_grid(
                 y: cy,
                 h_size: half,
                 max_dist,
+                support,
             });
         }
     }
