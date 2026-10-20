@@ -19,6 +19,11 @@ impl MicWorkspace {
     /// Build both indexes for `host`.
     pub fn new(host: HostPolygon) -> Result<Self, MicError> {
         let seg_index = SegmentIndex::from_host(&host);
+        Self::with_segments(host, seg_index)
+    }
+
+    /// Build both indexes from a segment table the caller already has.
+    pub fn with_segments(host: HostPolygon, seg_index: SegmentIndex) -> Result<Self, MicError> {
         if seg_index.is_empty() {
             return Err(MicError::InvalidInput(
                 "polygon has no non-degenerate boundary segments".to_string(),

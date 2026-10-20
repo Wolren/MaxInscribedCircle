@@ -29,10 +29,10 @@ pub struct HostPolygon {
     pub coords: Vec<[f64; 2]>,
     /// Ring offsets into `coords`.
     pub rings: Vec<RingMeta>,
-    /// Canonicalized geometry used for predicates.
-    pub polygon: Polygon<f64>,
-    /// Original polygon before normalization, kept so comparison solvers see
-    /// the caller's exact coordinates.
+    /// The caller's polygon, kept so a comparison solver can hand GEOS the
+    /// exact coordinates it was given. Coordinates are never normalized, so
+    /// this is the same geometry `coords` holds, and one clone serves both.
+    #[cfg(feature = "bench-geos")]
     pub original_polygon: Polygon<f64>,
 }
 
@@ -88,7 +88,7 @@ impl HostPolygon {
         Ok(Self {
             coords,
             rings,
-            polygon: poly.clone(),
+            #[cfg(feature = "bench-geos")]
             original_polygon: poly.clone(),
         })
     }
@@ -181,50 +181,29 @@ pub struct SegmentIndex {
 impl SegmentIndex {
     /// Build the table from every non-degenerate edge of a host polygon.
     pub fn from_host(host: &HostPolygon) -> Self {
-        // Collect ring data and flatten sequentially
-        let ring_data: Vec<_> = host
-            .rings
-            .iter()
-            .enumerate()
-            .map(|(rid, meta)| {
-                let ring = host.ring_coords(rid);
-                let mut edges = Vec::new();
-                if ring.len() >= 2 {
-                    for eid in 0..ring.len() - 1 {
-                        let a = ring[eid];
-                        let b = ring[eid + 1];
-                        let dx = b[0] - a[0];
-                        let dy = b[1] - a[1];
-                        let len_sq = dx * dx + dy * dy;
-                        if len_sq <= NORMALIZE_EPS {
-                            continue;
-                        }
-                        edges.push((
-                            a[0],
-                            a[1],
-                            b[0],
-                            b[1],
-                            rid,
-                            eid,
-                            meta.is_hole,
-                            a[0].min(b[0]),
-                            a[0].max(b[0]),
-                            a[1].min(b[1]),
-                            a[1].max(b[1]),
-                            dx,
-                            dy,
-                            len_sq,
-                        ));
-                    }
+        // Two passes, no intermediates. The first counts the segments that
+        // survive the degenerate-edge filter so the columns can be allocated
+        // exactly once; the second fills them in place. Building a per-ring Vec
+        // of 14-tuples and then flattening it cost three allocations and a
+        // repack per solve for a number that is cheap to recount.
+        let mut len = 0usize;
+        for (rid, meta) in host.rings.iter().enumerate() {
+            let ring = host.ring_coords(rid);
+            if ring.len() < 2 {
+                continue;
+            }
+            let _ = meta;
+            for eid in 0..ring.len() - 1 {
+                let a = ring[eid];
+                let b = ring[eid + 1];
+                let dx = b[0] - a[0];
+                let dy = b[1] - a[1];
+                if dx * dx + dy * dy > NORMALIZE_EPS {
+                    len += 1;
                 }
-                edges
-            })
-            .collect();
+            }
+        }
 
-        let flat_results: Vec<_> = ring_data.iter().flat_map(|edges| edges.iter()).collect();
-
-        // Allocate exact capacity and pack
-        let len = flat_results.len();
         let mut index = Self {
             ax: Vec::with_capacity(len),
             ay: Vec::with_capacity(len),
@@ -242,21 +221,35 @@ impl SegmentIndex {
             len_sq: Vec::with_capacity(len),
         };
 
-        for tup in flat_results {
-            index.ax.push(tup.0);
-            index.ay.push(tup.1);
-            index.bx.push(tup.2);
-            index.by.push(tup.3);
-            index.ring_id.push(tup.4);
-            index.edge_id.push(tup.5);
-            index.is_hole_edge.push(tup.6);
-            index.bbox_minx.push(tup.7);
-            index.bbox_maxx.push(tup.8);
-            index.bbox_miny.push(tup.9);
-            index.bbox_maxy.push(tup.10);
-            index.dir_x.push(tup.11);
-            index.dir_y.push(tup.12);
-            index.len_sq.push(tup.13);
+        for (rid, meta) in host.rings.iter().enumerate() {
+            let ring = host.ring_coords(rid);
+            if ring.len() < 2 {
+                continue;
+            }
+            for eid in 0..ring.len() - 1 {
+                let a = ring[eid];
+                let b = ring[eid + 1];
+                let dx = b[0] - a[0];
+                let dy = b[1] - a[1];
+                let len_sq = dx * dx + dy * dy;
+                if len_sq <= NORMALIZE_EPS {
+                    continue;
+                }
+                index.ax.push(a[0]);
+                index.ay.push(a[1]);
+                index.bx.push(b[0]);
+                index.by.push(b[1]);
+                index.ring_id.push(rid);
+                index.edge_id.push(eid);
+                index.is_hole_edge.push(meta.is_hole);
+                index.bbox_minx.push(a[0].min(b[0]));
+                index.bbox_maxx.push(a[0].max(b[0]));
+                index.bbox_miny.push(a[1].min(b[1]));
+                index.bbox_maxy.push(a[1].max(b[1]));
+                index.dir_x.push(dx);
+                index.dir_y.push(dy);
+                index.len_sq.push(len_sq);
+            }
         }
 
         index
