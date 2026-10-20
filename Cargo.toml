@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [lib]
 name = "max_inscribed_circle"
 path = "src/lib.rs"
-crate-type = ["cdylib", "staticlib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 geo = "0.33.1"
@@ -53,14 +53,3 @@ hotpath = ["dep:hotpath"]
 serde_json = "1.0.154"
 wkt = { version = "0.14", features = ["geo-types"] }
 
-[[example]]
-name = "compare_geos"
-required-features = ["bench-geos"]
-
-[[example]]
-name = "parity_geos"
-required-features = ["bench-geos"]
-
-[[example]]
-name = "compare_apples"
-required-features = ["bench-geos"]
