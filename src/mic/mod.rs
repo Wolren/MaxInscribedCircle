@@ -98,7 +98,7 @@ pub fn maximum_inscribed_circle(
     opts: &MicOptions,
 ) -> Result<MicResult, MicError> {
     let host = HostPolygon::from_polygon(poly)?;
-    solve_on_host_polygon(&host, opts)
+    solve_on_host_polygon(host, opts)
 }
 
 /// Solve MIC reusing a workspace, which holds the indexes built for its polygon.
@@ -169,37 +169,34 @@ pub fn maximum_inscribed_circle_slice(
         .collect()
 }
 
-fn solve_on_host_polygon(host: &HostPolygon, _opts: &MicOptions) -> Result<MicResult, MicError> {
+fn solve_on_host_polygon(host: HostPolygon, _opts: &MicOptions) -> Result<MicResult, MicError> {
     // Phase 0: Try analytical fast path for simple shapes (triangle, rectangle, convex quad).
     // We intentionally do NOT dispatch arbitrary N-gons to fast_convex_n here:
     // real-world data has near-collinear reflex vertices and numerical noise that
     // can fool convexity checks, producing kernel circles smaller than the true MIC.
+    let mut seg_idx = None;
     if host.ring_count() == 1 {
         let outer_len = host.outer_ring().len();
         let result = if outer_len == 4 {
             // Triangle - exact incenter formula
-            solver::fast::fast_triangle(host)
+            solver::fast::fast_triangle(&host)
         } else if outer_len == 5 {
             // Rectangle (cheapest O(1)), then general convex quad (LP solver)
-            solver::fast::fast_rectangle(host).or_else(|| solver::fast::fast_convex_quad(host))
+            solver::fast::fast_rectangle(&host).or_else(|| solver::fast::fast_convex_quad(&host))
         } else {
             None
         };
         if let Some(mut result) = result {
-            // Every radius this function returns is the distance the segment
-            // table reports at the returned centre, so the reported circle
-            // always fits. The fast paths solve the shape class they recognise;
-            // this measurement confirms the polygon really is that class,
-            // because near-collinear reflex vertices in real data can fool the
-            // convexity tests. A shape that only looks like the class falls
-            // through to the grid instead of returning a radius it cannot
-            // support.
-            let seg_idx = input::SegmentIndex::from_host(host);
-            let actual_sq = seg_idx.batch_point_segment_distance_sq(
+            // The reported radius must be the distance the segment table reports
+            // at the returned centre, so the circle always fits. Near-collinear
+            // reflex vertices in real data can fool the convexity tests, and a
+            // shape that only looks like the class must fall through.
+            let table = input::SegmentIndex::from_host(&host);
+            let actual_sq = table.batch_point_segment_distance_sq(
                 result.center.x(),
                 result.center.y(),
                 0,
-                seg_idx.len(),
+                table.len(),
             );
             let actual = actual_sq.max(0.0).sqrt();
             let relative = if actual > 0.0 {
@@ -212,17 +209,27 @@ fn solve_on_host_polygon(host: &HostPolygon, _opts: &MicOptions) -> Result<MicRe
                 result.radius_sq = actual_sq;
                 return Ok(result);
             }
+            // The table is already built, so hand it to the grid rather than
+            // rebuilding it there.
+            seg_idx = Some(table);
         }
     }
 
     // Phase 1: grid search over the bounding box, which answers every shape
-    // the fast paths did not claim.
-    let workspace = MicWorkspace::new(host.clone())?;
-    let tolerance = grid_tolerance(host);
+    // the fast paths did not claim. The workspace takes ownership of the host
+    // polygon, so the solve reads it back from there instead of cloning it.
+    let workspace = match seg_idx {
+        Some(table) => MicWorkspace::with_segments(host, table)?,
+        None => MicWorkspace::new(host)?,
+    };
+    let tolerance = grid_tolerance(&workspace.host);
 
-    if let Some(grid_result) =
-        solve_grid(host, &workspace.pip_index, &workspace.nb_index, tolerance)
-    {
+    if let Some(grid_result) = solve_grid(
+        &workspace.host,
+        &workspace.pip_index,
+        &workspace.nb_index,
+        tolerance,
+    ) {
         return Ok(grid_result);
     }
 
