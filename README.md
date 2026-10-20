@@ -5,6 +5,8 @@
 Finds the largest circle that fits inside a polygon. Holes act as boundary, so
 the circle must clear them too.
 
+[![crate](https://img.shields.io/crates/v/max-inscribed-circle.svg)](https://crates.io/crates/max-inscribed-circle)
+[![docs](https://docs.rs/max-inscribed-circle/badge.svg)](https://docs.rs/max-inscribed-circle)
 ![MSRV](https://img.shields.io/badge/rustc-1.88+-ab6000.svg)
 [![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen.svg)](https://github.com/Wolren/MaxInscribedCircle/actions/workflows/ci.yml)
 [![GEOS](https://img.shields.io/badge/vs%20GEOS-8.4x%20faster-blue.svg)](https://github.com/Wolren/MaxInscribedCircle#performance)
