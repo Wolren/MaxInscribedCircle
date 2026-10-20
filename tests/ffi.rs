@@ -1,7 +1,7 @@
 //! In-process smoke tests for the C ABI: flat arrays in, structs out.
 
 use max_inscribed_circle::ffi::{
-    mic_options_default, mic_solve, mic_solve_multipolygon, MicOptionsC, MicPolyInput, MicResultC,
+    mic_options_default, mic_solve, mic_solve_multipolygon, MicPolyInput, MicResultC,
 };
 use std::mem::MaybeUninit;
 
@@ -33,8 +33,8 @@ fn ffi_mic_square() {
         assert!((r.radius - 5.0).abs() < 1e-6, "radius={}", r.radius);
         assert!((r.center_x - 5.0).abs() < 1e-6);
         assert!((r.center_y - 5.0).abs() < 1e-6);
-        // A square is answered by the analytical fast path, so engine code 0.
-        assert_eq!(r.used_engine, 0);
+        // A square is answered by the analytical fast path, reported as grid.
+        assert_eq!(r.used_engine, 1);
     }
 }
 
@@ -90,8 +90,9 @@ fn ffi_mic_rejects_garbage() {
 
 #[test]
 fn ffi_mic_honours_explicit_options() {
-    // Explicit options: FastF64 robustness, solved through the native pipeline.
-    let opts = MicOptionsC { robust_mode: 0 };
+    // Explicit options: the struct has no tunables, so this checks that passing
+    // a non-null options pointer still solves and reports the grid engine.
+    let opts = mic_options_default();
     let sq = square();
     unsafe {
         let mut out = MaybeUninit::<MicResultC>::uninit();
@@ -106,7 +107,6 @@ fn ffi_mic_honours_explicit_options() {
         assert_eq!(rc, 0);
         let r = out.assume_init();
         assert!((r.radius - 5.0).abs() < 1e-6, "radius={}", r.radius);
-        assert_eq!(r.used_engine, 0);
+        assert_eq!(r.used_engine, 1);
     }
-    assert_eq!(mic_options_default().robust_mode, 1);
 }

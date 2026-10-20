@@ -6,7 +6,6 @@
 
 use super::mic::{
     maximum_inscribed_circle, maximum_inscribed_circle_multipolygon, MicOptions, MicUsedEngine,
-    RobustMode,
 };
 use geo_types::{Coord, LineString, Polygon};
 use pyo3::exceptions::PyValueError;
@@ -83,36 +82,22 @@ pub struct PyMicResult {
     pub component_index: Option<usize>,
 }
 
-fn parse_robust(value: Option<&str>) -> PyResult<RobustMode> {
-    match value.unwrap_or("filtered") {
-        "fast_f64" => Ok(RobustMode::FastF64),
-        "filtered" => Ok(RobustMode::Filtered),
-        other => Err(PyValueError::new_err(format!(
-            "invalid robust_mode '{other}'; expected fast_f64|filtered"
-        ))),
-    }
-}
-
 fn used_engine_name(v: MicUsedEngine) -> &'static str {
     match v {
-        MicUsedEngine::Exact => "exact",
         MicUsedEngine::Grid => "grid",
         MicUsedEngine::Geos => "geos",
     }
 }
 
-#[pyfunction(signature = (exterior, holes=None, robust_mode=None))]
+#[pyfunction(signature = (exterior, holes=None))]
 /// Solve MIC for one polygon given as an exterior ring plus optional holes.
 pub fn solve_mic_py(
     exterior: Vec<(f64, f64)>,
     holes: Option<Vec<Vec<(f64, f64)>>>,
-    robust_mode: Option<&str>,
 ) -> PyResult<PyMicResult> {
     guard(|| {
         let polygon = build_polygon(exterior, holes)?;
-        let opts = MicOptions {
-            robust_mode: parse_robust(robust_mode)?,
-        };
+        let opts = MicOptions::default();
         let r = maximum_inscribed_circle(&polygon, &opts).map_err(core_err)?;
         Ok(PyMicResult {
             center_x: r.center.x(),
@@ -126,22 +111,16 @@ pub fn solve_mic_py(
     })
 }
 
-#[pyfunction(signature = (polygons, robust_mode=None))]
+#[pyfunction(signature = (polygons))]
 /// Solve MIC across several polygons and return the best component circle.
-pub fn solve_mic_multipolygon_py(
-    polygons: Vec<MicPolygonInput>,
-    robust_mode: Option<&str>,
-) -> PyResult<PyMicResult> {
+pub fn solve_mic_multipolygon_py(polygons: Vec<MicPolygonInput>) -> PyResult<PyMicResult> {
     guard(|| {
-        let robust = parse_robust(robust_mode)?;
         let mut polys = Vec::with_capacity(polygons.len());
         for (ext, holes) in polygons {
             polys.push(build_polygon(ext, holes)?);
         }
         let multi = geo_types::MultiPolygon(polys);
-        let opts = MicOptions {
-            robust_mode: robust,
-        };
+        let opts = MicOptions::default();
         let r = maximum_inscribed_circle_multipolygon(&multi, &opts).map_err(core_err)?;
         Ok(PyMicResult {
             center_x: r.center.x(),

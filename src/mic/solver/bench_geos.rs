@@ -15,30 +15,25 @@ use geos::{Geom, Geometry};
 
 use super::super::index::NearestBoundaryIndex;
 use super::super::input::{HostPolygon, SegmentIndex};
-use super::super::{MicApproach, MicError, MicResult, MicUsedEngine, RobustMode};
+use super::super::{MicApproach, MicError, MicResult, MicUsedEngine};
 
 /// Tolerance to hand GEOS for a host polygon, scaled by its diagonal.
 ///
-/// `FastF64` gives `diag * 1e-6` and `Filtered` gives `diag * 1e-8`, both
-/// floored at 1e-12. The native grid stage refines to a tighter `diag * 1e-7`,
-/// so comparing across mismatched tolerances measures the tolerance rather
-/// than the solver.
-pub fn geos_tolerance_for(host: &HostPolygon, robust_mode: RobustMode) -> f64 {
+/// The native grid stage refines to `diag * 1e-7`, so the default here is
+/// `diag * 1e-8`, floored at 1e-12: a tighter GEOS is given the work, and the
+/// comparison then measures the solvers rather than the tolerance.
+pub fn geos_tolerance_for(host: &HostPolygon) -> f64 {
     let Some((min_x, min_y, max_x, max_y)) = host.bounds() else {
         return 1e-6;
     };
     let diag = (max_x - min_x).hypot(max_y - min_y).max(1.0);
-    let factor = match robust_mode {
-        RobustMode::FastF64 => 1e-6,
-        RobustMode::Filtered => 1e-8,
-    };
-    (diag * factor).max(1e-12)
+    (diag * 1e-8).max(1e-12)
 }
 
 /// Solve a polygon with GEOS, for benchmark and comparison runs.
-pub fn solve_mic_geos(poly: &Polygon<f64>, robust_mode: RobustMode) -> Result<MicResult, MicError> {
+pub fn solve_mic_geos(poly: &Polygon<f64>) -> Result<MicResult, MicError> {
     let host = HostPolygon::from_polygon(poly)?;
-    solve_mic_geos_host(&host, robust_mode)
+    solve_mic_geos_host(&host)
 }
 
 /// Solve an already-normalized host polygon with GEOS.
@@ -46,11 +41,8 @@ pub fn solve_mic_geos(poly: &Polygon<f64>, robust_mode: RobustMode) -> Result<Mi
 /// GEOS receives the original ring coordinates, not the normalized copy, and
 /// the returned center and radius are re-measured against the segment table so
 /// both solvers report radii on the same basis.
-pub fn solve_mic_geos_host(
-    host: &HostPolygon,
-    robust_mode: RobustMode,
-) -> Result<MicResult, MicError> {
-    solve_mic_geos_with_tolerance(host, geos_tolerance_for(host, robust_mode))
+pub fn solve_mic_geos_host(host: &HostPolygon) -> Result<MicResult, MicError> {
+    solve_mic_geos_with_tolerance(host, geos_tolerance_for(host))
 }
 
 /// Solve an already-normalized host polygon with GEOS at an explicit tolerance.
