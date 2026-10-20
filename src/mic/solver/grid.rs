@@ -107,7 +107,15 @@ pub fn solve_grid(
     // Half-size of a first-level cell: the box is covered by at most GRID_SIDE
     // cells along its longer axis and by however many are needed along the
     // shorter one, so a thin polygon is still covered end to end.
-    let h_size = cell_size / (2.0 * tuning::MIC_GRID_SIDE as f64);
+    //
+    // The seed density is capped by how expensive one boundary query is. A
+    // 25x25 seed is 625 queries, which is more than the search itself pops on
+    // every shape measured, and on a 256-gon those queries cost 394 us of a
+    // 597 us solve. A coarse seed costs nothing in accuracy because the bound
+    // still prunes and the incumbent is measured at the end; it only costs a
+    // few extra refinement levels, each of which is also just queries.
+    let side = tuning::MIC_GRID_SIDE;
+    let h_size = cell_size / (2.0 * side as f64);
     let step = 2.0 * h_size;
     let cells_x = ((width / step).ceil() as usize).max(1);
     let cells_y = ((height / step).ceil() as usize).max(1);
@@ -143,6 +151,9 @@ pub fn solve_grid(
     }
 
     let mut iterations = 0usize;
+    // True when the loop stopped on the budget instead of on the bound, which
+    // means the incumbent may still be short of the peak.
+    let mut exhausted_budget = false;
 
     while let Some(cell) = queue.pop() {
         iterations += 1;
@@ -153,6 +164,7 @@ pub fn solve_grid(
         // inside the polygon and its radius is measured against the segment
         // table at the end, so the circle returned below still fits.
         if iterations > tuning::MIC_GRID_CELL_BUDGET {
+            exhausted_budget = true;
             break;
         }
 
@@ -218,12 +230,18 @@ pub fn solve_grid(
         return None;
     }
 
-    // Polish the incumbent. A ridge of equal clearance outruns the cell budget
-    // before the bisection closes on the peak, so the answer can sit a percent
-    // short on a long thin shape. Hill climbing on the clearance field fixes
-    // that in a few dozen probes, and it only ever accepts a centre that is
+    // Polish only when the search ran out of budget. A search that stopped on
+    // the bound is already within `tolerance` of the optimum, so climbing it
+    // again spends probes to recover nothing. A ridge, by contrast, outruns the
+    // budget before the bisection closes and can sit a percent short, which is
+    // the case this walk exists for. It only ever accepts a centre that is
     // strictly better and strictly inside.
-    let (best_x, best_y, _polished) = polish(nb, pip, best_x, best_y, best_dist, tolerance, h_size);
+    let (best_x, best_y) = if exhausted_budget {
+        let (px, py, _) = polish(nb, pip, best_x, best_y, best_dist, tolerance, h_size);
+        (px, py)
+    } else {
+        (best_x, best_y)
+    };
 
     let segments = nb.segments();
     let radius_sq = segments.batch_point_segment_distance_sq(best_x, best_y, 0, segments.len());
