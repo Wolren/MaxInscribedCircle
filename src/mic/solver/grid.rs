@@ -7,10 +7,13 @@
 //! inside the polygon or not, which is what makes the pruning sound for cells
 //! that straddle an edge. A cell leaves the queue only when its bound proves it
 //! cannot beat the incumbent by more than the tolerance, so the queue drains
-//! exactly when no region left in play can improve the answer. Nothing else
-//! ends the search: there is no iteration budget, because a counter that stops
-//! the loop early turns an unfinished search into an answer that looks
-//! finished.
+//! exactly when no region left in play can improve the answer.
+//!
+//! The bound is equally loose in every direction, so a ridge of equal clearance
+//! is resolved to `tolerance` along its whole length: cells grow like
+//! `length / tolerance`. [`tuning::MIC_GRID_CELL_BUDGET`] caps that work, and
+//! an exhausted budget returns `None` rather than a partial answer, which hands
+//! the polygon to the candidate solver instead.
 use std::collections::BinaryHeap;
 
 use super::super::index::{NearestBoundaryIndex, PipIndex};
@@ -26,7 +29,6 @@ struct GridCell {
     x: f64,
     y: f64,
     h_size: f64,
-    distance: f64,
     max_dist: f64,
 }
 
@@ -40,7 +42,7 @@ impl Eq for GridCell {}
 
 impl PartialOrd for GridCell {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.max_dist.partial_cmp(&other.max_dist)
+        Some(self.cmp(other))
     }
 }
 
@@ -98,7 +100,7 @@ pub fn solve_grid(
     let height = max_y - min_y;
     let cell_size = width.max(height);
 
-    if !(cell_size > 0.0) || !tolerance.is_finite() || tolerance <= 0.0 {
+    if cell_size <= 0.0 || !tolerance.is_finite() || tolerance <= 0.0 {
         return None;
     }
 
@@ -135,7 +137,6 @@ pub fn solve_grid(
                 x: cx,
                 y: cy,
                 h_size,
-                distance: if inside { d } else { 0.0 },
                 max_dist: d + h_size * SQRT2,
             });
         }
@@ -145,6 +146,15 @@ pub fn solve_grid(
 
     while let Some(cell) = queue.pop() {
         iterations += 1;
+
+        // A ridge of equal clearance costs length / tolerance cells, so the
+        // budget stops shapes the bisection cannot finish in reasonable time.
+        // Stopping keeps the incumbent: every centre the search accepts is
+        // inside the polygon and its radius is measured against the segment
+        // table at the end, so the circle returned below still fits.
+        if iterations > tuning::MIC_GRID_CELL_BUDGET {
+            break;
+        }
 
         // The heap is ordered by the bound, so once the best remaining cell
         // cannot beat the incumbent by more than the tolerance, no cell can.
@@ -194,7 +204,6 @@ pub fn solve_grid(
                 x: cx,
                 y: cy,
                 h_size: half,
-                distance: if inside { d } else { 0.0 },
                 max_dist,
             });
         }

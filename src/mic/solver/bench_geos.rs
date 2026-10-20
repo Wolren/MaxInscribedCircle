@@ -74,7 +74,7 @@ pub fn solve_mic_geos_with_tolerance(
         .map_err(|err| MicError::GeosFailed(format!("failed to decode GEOS MIC output: {err}")))?;
 
     let (center, boundary_hint) = parse_geos_output(&out_wkt)?;
-    let nb_index = NearestBoundaryIndex::new(SegmentIndex::from_host(host), false);
+    let nb_index = NearestBoundaryIndex::new(SegmentIndex::from_host(host));
     let Some((nearest_sq, _)) = nb_index.nearest_distance_sq(center.0, center.1) else {
         return Err(MicError::NoCircleFound);
     };

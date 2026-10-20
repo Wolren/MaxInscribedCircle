@@ -39,10 +39,15 @@ use max_inscribed_circle::mic::solver::exact::solve_exact;
 use max_inscribed_circle::mic::workspace::MicWorkspace;
 use max_inscribed_circle::mic::{maximum_inscribed_circle, MicOptions, MicResult};
 
-const DEFAULT_WKT_DIRS: [&str; 2] = [
-    "D:/Projects/gis/lib/georust-geo/geo-test-fixtures/fixtures",
-    "D:/Projects/gis/lib/geos/tests/resources",
-];
+// Fixture directories are taken from the environment so the harness does not
+// carry one machine's layout. Pass directories as arguments, or set
+// MIC_WKT_DIRS to a `;`-separated (Windows) or `:`-separated list.
+fn default_wkt_dirs() -> Vec<PathBuf> {
+    match std::env::var("MIC_WKT_DIRS") {
+        Ok(raw) if !raw.trim().is_empty() => std::env::split_paths(&raw).collect(),
+        _ => Vec::new(),
+    }
+}
 
 /// Components above this vertex count skip the sampling floor (it sweeps the
 /// ring per probe and is not worth the wait on giants).
@@ -512,7 +517,7 @@ fn measure(poly: &Polygon<f64>, host: &HostPolygon) -> Measurements {
 
     // The exact candidate stage on its own, so its cost and its distance
     // from the answer the pipeline returns are both on the record.
-    let exact = match MicWorkspace::new(host.clone(), false) {
+    let exact = match MicWorkspace::new(host.clone()) {
         Ok(mut ws) => {
             let t = Instant::now();
             let r = solve_exact(&mut ws, &options).ok();
@@ -599,7 +604,7 @@ fn sampling_floor(poly: &Polygon<f64>, host: &HostPolygon) -> Option<(f64, f64, 
         return None;
     }
     let (min_x, min_y, max_x, max_y) = host.bounds()?;
-    let nb = NearestBoundaryIndex::new(SegmentIndex::from_host(host), true);
+    let nb = NearestBoundaryIndex::new(SegmentIndex::from_host(host));
     let grid = if verts > 2_000 { 32 } else { FLOOR_GRID };
     let mut best = (0.0f64, min_x, min_y);
     for i in 1..grid {
@@ -631,7 +636,7 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let dirs: Vec<PathBuf> = if args.is_empty() {
-        DEFAULT_WKT_DIRS.iter().map(PathBuf::from).collect()
+        default_wkt_dirs()
     } else {
         args.iter().map(PathBuf::from).collect()
     };

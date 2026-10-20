@@ -18,7 +18,7 @@ use super::mic::{
     MicResult,
 };
 use geo_traits::to_geo::ToGeoPolygon;
-use geo_traits::{GeometryTrait, PolygonTrait};
+use geo_traits::PolygonTrait;
 use geo_types::{Geometry, MultiPolygon, Polygon};
 
 /// Solve MIC on any foreign polygon implementing `PolygonTrait`.

@@ -10,6 +10,7 @@ documentation = "https://docs.rs/max-inscribed-circle"
 readme = "README.md"
 keywords = ["gis", "geospatial", "geometry", "voronoi", "inscribed-circle"]
 categories = ["science::geo", "algorithms", "mathematics"]
+exclude = ["aggregate_exact.py", ".github"]
 
 [package.metadata.docs.rs]
 features = ["geo-traits"]
@@ -28,19 +29,26 @@ rayon = "1.12"
 rustc-hash = "2.1.3"
 spade = "2.15.1"
 libc = "0.2"
-geos = { version = "11.1.1", features = ["v3_9_0"], optional = true }
 pyo3 = { version = "0.29", optional = true }
 geo-traits = { version = "0.3", optional = true }
+geos = { version = "11.1.1", features = ["v3_9_0"], optional = true }
+hotpath = { version = "0.27", optional = true }
+robust = { version = "1.2.0", optional = true }
+wide = { version = "1.7", optional = true }
 
 [features]
 default = []
 # Comparison only: links the GEOS C library so benchmarks can cross-check the
-# native solvers. Never used by the solve pipeline.
+# native solvers. Never compiled into the solve pipeline.
 bench-geos = ["dep:geos"]
-shewchuk = []
 python = ["dep:pyo3"]
 extension-module = ["pyo3/extension-module"]
 geo-traits = ["dep:geo-traits"]
+# 4-lane batched segment distance over the stable `wide` crate.
+simd = ["dep:wide"]
+# Exact orient2d predicates from `robust` in the containment test.
+shewchuk = ["dep:robust"]
+hotpath = ["dep:hotpath"]
 
 [dev-dependencies]
 wkt = { version = "0.14", features = ["geo-types"] }

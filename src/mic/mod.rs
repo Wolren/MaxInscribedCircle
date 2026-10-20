@@ -34,19 +34,12 @@ pub enum RobustMode {
 pub struct MicOptions {
     /// Robustness mode: Filtered adds candidate filtering to the exact solver.
     pub robust_mode: RobustMode,
-    /// Use a BVH instead of a uniform grid for nearest-boundary queries.
-    pub use_bvh: bool,
-    /// Reserved and unused; batch parallel solves are provided by
-    /// [`maximum_inscribed_circle_slice`].
-    pub use_parallel: bool,
 }
 
 impl Default for MicOptions {
     fn default() -> Self {
         Self {
             robust_mode: RobustMode::Filtered,
-            use_bvh: false,
-            use_parallel: false,
         }
     }
 }
@@ -243,7 +236,7 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
 
     // Phase 1: grid search over the bounding box. It answers most complex
     // shapes and returns before the exact stage runs.
-    let workspace = MicWorkspace::new(host.clone(), opts.use_bvh)?;
+    let workspace = MicWorkspace::new(host.clone())?;
     let tolerance = grid_tolerance(host);
 
     if let Some(grid_result) =
@@ -277,7 +270,7 @@ pub fn grid_tolerance(host: &HostPolygon) -> f64 {
 }
 
 fn run_exact(host: &HostPolygon, opts: &MicOptions) -> Result<MicResult, MicError> {
-    let mut workspace = MicWorkspace::new(host.clone(), opts.use_bvh)?;
+    let mut workspace = MicWorkspace::new(host.clone())?;
     solve_exact(&mut workspace, opts).map_err(|err| MicError::ExactFailed(err.to_string()))
 }
 
@@ -303,17 +296,12 @@ mod tests {
     fn mic_default_options() {
         let opts = MicOptions::default();
         assert_eq!(opts.robust_mode, RobustMode::Filtered);
-        assert!(!opts.use_bvh);
     }
 
     #[test]
     fn mic_exact_square_radius() {
         let poly = square(10.0);
-        let opts = MicOptions {
-            robust_mode: RobustMode::Filtered,
-            use_bvh: false,
-            use_parallel: false,
-        };
+        let opts = MicOptions::default();
         let r = maximum_inscribed_circle(&poly, &opts).expect("solve failed");
         assert!((r.radius - 5.0).abs() < 1e-6, "radius={}", r.radius);
         assert!((r.center.x() - 5.0).abs() < 1e-6);
@@ -332,11 +320,7 @@ mod tests {
             ]),
             vec![],
         );
-        let opts = MicOptions {
-            robust_mode: RobustMode::Filtered,
-            use_bvh: false,
-            use_parallel: false,
-        };
+        let opts = MicOptions::default();
         let r = maximum_inscribed_circle(&poly, &opts).expect("solve failed");
         assert!((r.radius - 1.0).abs() < 1e-6, "radius={}", r.radius);
     }
@@ -352,11 +336,7 @@ mod tests {
             ]),
             vec![],
         );
-        let opts = MicOptions {
-            robust_mode: RobustMode::Filtered,
-            use_bvh: false,
-            use_parallel: false,
-        };
+        let opts = MicOptions::default();
         let r = maximum_inscribed_circle(&poly, &opts).expect("solve failed");
         assert!(r.radius > 1.0, "radius={}", r.radius);
         use geo::Contains;
@@ -375,5 +355,177 @@ mod tests {
         );
         let opts = MicOptions::default();
         assert!(maximum_inscribed_circle(&poly, &opts).is_err());
+    }
+
+    fn poly(pts: &[(f64, f64)]) -> Polygon<f64> {
+        let mut v: Vec<Coord> = pts.iter().map(|p| Coord { x: p.0, y: p.1 }).collect();
+        v.push(v[0]);
+        Polygon::new(LineString::from(v), vec![])
+    }
+
+    fn assert_fits(poly: &Polygon<f64>, r: &MicResult) {
+        use crate::mic::input::{HostPolygon, SegmentIndex};
+        let host = HostPolygon::from_polygon(poly).expect("host");
+        let seg = SegmentIndex::from_host(&host);
+        let measured = seg
+            .batch_point_segment_distance_sq(r.center.x(), r.center.y(), 0, seg.len())
+            .sqrt();
+        let rel = (r.radius - measured).abs() / measured.max(1e-300);
+        assert!(
+            rel <= 1e-9,
+            "reported radius {} differs from measured clearance {}",
+            r.radius,
+            measured
+        );
+    }
+
+    #[test]
+    fn mic_rejects_nan_coordinate() {
+        let bad = Polygon::new(
+            LineString::from(vec![
+                Coord { x: 0.0, y: 0.0 },
+                Coord {
+                    x: f64::NAN,
+                    y: 0.0,
+                },
+                Coord { x: 10.0, y: 10.0 },
+                Coord { x: 0.0, y: 10.0 },
+                Coord { x: 0.0, y: 0.0 },
+            ]),
+            vec![],
+        );
+        let err = maximum_inscribed_circle(&bad, &MicOptions::default()).unwrap_err();
+        assert!(err.to_string().contains("NaN"), "got {err}");
+    }
+
+    #[test]
+    fn mic_rejects_infinite_coordinate() {
+        let bad = Polygon::new(
+            LineString::from(vec![
+                Coord { x: 0.0, y: 0.0 },
+                Coord {
+                    x: f64::INFINITY,
+                    y: 0.0,
+                },
+                Coord { x: 10.0, y: 10.0 },
+                Coord { x: 0.0, y: 10.0 },
+                Coord { x: 0.0, y: 0.0 },
+            ]),
+            vec![],
+        );
+        assert!(maximum_inscribed_circle(&bad, &MicOptions::default()).is_err());
+    }
+
+    #[test]
+    fn mic_respects_hole() {
+        // 10x10 frame with a 4x4 hole: the circle must clear the hole, not
+        // span the frame. Analytic value is sqrt(2) * (5 - 2) / 1 .. = 1.75736.
+        let frame = Polygon::new(
+            LineString::from(vec![
+                Coord { x: 0.0, y: 0.0 },
+                Coord { x: 10.0, y: 0.0 },
+                Coord { x: 10.0, y: 10.0 },
+                Coord { x: 0.0, y: 10.0 },
+                Coord { x: 0.0, y: 0.0 },
+            ]),
+            vec![LineString::from(vec![
+                Coord { x: 3.0, y: 3.0 },
+                Coord { x: 7.0, y: 3.0 },
+                Coord { x: 7.0, y: 7.0 },
+                Coord { x: 3.0, y: 7.0 },
+                Coord { x: 3.0, y: 3.0 },
+            ])],
+        );
+        let r = maximum_inscribed_circle(&frame, &MicOptions::default()).expect("solve");
+        assert!(
+            (r.radius - 1.757_359_312_8).abs() < 1e-6,
+            "radius={} expected the hole-limited value",
+            r.radius
+        );
+        assert_fits(&frame, &r);
+    }
+
+    #[test]
+    fn mic_concave_shape_fits() {
+        let l = poly(&[
+            (0.0, 0.0),
+            (4.0, 0.0),
+            (4.0, 1.0),
+            (1.0, 1.0),
+            (1.0, 3.0),
+            (0.0, 3.0),
+        ]);
+        let r = maximum_inscribed_circle(&l, &MicOptions::default()).expect("solve");
+        assert!(
+            (r.radius - 0.585_786_437_6).abs() < 1e-6,
+            "radius={}",
+            r.radius
+        );
+        assert_fits(&l, &r);
+    }
+
+    #[test]
+    fn mic_thin_corridor_is_fast_and_fits() {
+        // A ridge of equal clearance used to cost millions of cells here.
+        let corridor = poly(&[(0.0, 0.0), (1000.0, 0.0), (1000.0, 2.0), (0.0, 2.0)]);
+        let started = std::time::Instant::now();
+        let r = maximum_inscribed_circle(&corridor, &MicOptions::default()).expect("solve");
+        let elapsed = started.elapsed();
+        assert!((r.radius - 1.0).abs() < 1e-9, "radius={}", r.radius);
+        assert_fits(&corridor, &r);
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "thin corridor took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn mic_notched_corridor_fits() {
+        // The optimum sits in the notch basin, which the candidate stage alone
+        // does not reach. Whatever stage answers, the circle must fit.
+        let notched = poly(&[
+            (0.0, 0.0),
+            (100.0, 0.0),
+            (100.0, 2.0),
+            (51.0, 2.0),
+            (51.0, 3.0),
+            (50.0, 3.0),
+            (50.0, 2.0),
+            (0.0, 2.0),
+        ]);
+        let r = maximum_inscribed_circle(&notched, &MicOptions::default()).expect("solve");
+        assert!(r.radius > 1.0, "radius={} lost the notch", r.radius);
+        assert_fits(&notched, &r);
+    }
+
+    #[test]
+    fn mic_multipolygon_reports_component() {
+        let small = poly(&[(20.0, 20.0), (22.0, 20.0), (22.0, 22.0), (20.0, 22.0)]);
+        let big = poly(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
+        let multi = MultiPolygon(vec![small, big]);
+        let r =
+            maximum_inscribed_circle_multipolygon(&multi, &MicOptions::default()).expect("solve");
+        assert!((r.radius - 5.0).abs() < 1e-6);
+        assert_eq!(r.component_index, Some(1));
+    }
+
+    #[test]
+    fn mic_batch_preserves_order() {
+        let shapes: Vec<Polygon<f64>> = (1..=4)
+            .map(|k| {
+                poly(&[
+                    (0.0, 0.0),
+                    (k as f64, 0.0),
+                    (k as f64, k as f64),
+                    (0.0, k as f64),
+                ])
+            })
+            .collect();
+        let out = maximum_inscribed_circle_slice(&shapes, &MicOptions::default());
+        assert_eq!(out.len(), 4);
+        for (k, r) in out.iter().enumerate() {
+            let side = (k + 1) as f64;
+            assert!((r.as_ref().expect("solve").radius - side / 2.0).abs() < 1e-6);
+        }
     }
 }
