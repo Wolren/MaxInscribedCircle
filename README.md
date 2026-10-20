@@ -16,8 +16,6 @@ the circle must clear them too.
 The maximum inscribed circle is the largest circle that fits inside a polygon.
 Every boundary segment limits it, so an interior ring limits it as well.
 
-The crate is pure Rust. It calls no external solver.
-
 ## API
 
 | Function | Use |
@@ -102,23 +100,6 @@ Regenerate with
 `cargo run --release --features bench-geos --example compare_apples`. The build
 needs the GEOS C library. The GEOS dependency reads `GEOS_LIB_DIR` and
 `GEOS_VERSION` when pkg-config cannot find an install.
-
-## Limitations
-
-1. **The GEOS comparison is not an independent method.** GEOS runs the same
-   cell-refinement branch and bound as the grid stage, so agreement between the
-   two means that two implementations of one algorithm match.
-2. **Input must be a valid simple polygon.** The crate does not detect a self
-   intersection, so a crossing ring gives a meaningless answer.
-3. **A degenerate input fails fast.** A NaN or infinite coordinate returns
-   `MicError::InvalidInput`, and a zero-area ring fails the same way.
-4. **A long ridge can exhaust the cell budget.** The hill climb then finishes
-   the work, and accuracy stays within the tolerance above. The worst case on
-   the GEOS corpus is 1.5e-4 relative.
-5. **Accuracy is relative to polygon size.** A polygon stored in degrees refines
-   to a tolerance in degrees. The same shape in metres and in degrees agrees.
-6. **The benchmark numbers come from one machine and one GEOS build.** A
-   different GEOS build or core count moves the GEOS column, not the native one.
 
 ## Integration with the geo ecosystem
 
