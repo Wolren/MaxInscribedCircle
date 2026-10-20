@@ -53,3 +53,15 @@ hotpath = ["dep:hotpath"]
 serde_json = "1.0.154"
 wkt = { version = "0.14", features = ["geo-types"] }
 
+
+[[example]]
+name = "compare_geos"
+required-features = ["bench-geos"]
+
+[[example]]
+name = "parity_geos"
+required-features = ["bench-geos"]
+
+[[example]]
+name = "compare_apples"
+required-features = ["bench-geos"]
