@@ -114,10 +114,11 @@ from. On dense polygons GEOS nearly catches us: at 129+ vertices we are 1.84x
 ahead. The ten cases we lose are all 4-vertex parcels at 0.62x to 0.71x, where
 both solvers take under 1 us and GEOS wins on constant overhead alone.
 
-Both sides run serially on one thread: the batch entry point is not used here.
-Pinned to a single core with CPU affinity the ratio holds at 7.9x, while the
-rayon batch over the same parcels drops from 6.1x to 1.0x, so the margin comes
-from the solver and not from concurrency.
+Both sides run serially on one thread, so this measures the solver, not the
+threading. Pinned to a single core the ratio holds at 7.9x, while the rayon
+batch over the same parcels drops from 6.1x to 1.0x, so the margin is
+algorithmic. The batch entry point itself is tested: `maximum_inscribed_circle_slice`
+returns bit-identical results in input order and runs 6.1x faster on 12 cores.
 
 Regenerate with `cargo run --release --features bench-geos --example compare_apples`,
 which needs `GEOS_LIB_DIR`, `GEOS_VERSION` and GEOS on `PATH`.
