@@ -11,9 +11,15 @@
 //!
 //! The bound is equally loose in every direction, so a ridge of equal clearance
 //! is resolved to `tolerance` along its whole length: cells grow like
-//! `length / tolerance`. [`tuning::MIC_GRID_CELL_BUDGET`] caps that work, and
-//! an exhausted budget returns `None` rather than a partial answer, which hands
-//! the polygon to the candidate solver instead.
+//! `length / tolerance`. [`tuning::MIC_GRID_CELL_BUDGET`] caps that work, and an
+//! exhausted budget stops the search and keeps the incumbent, which the hill
+//! climb below then sharpens.
+//!
+//! The same looseness costs work on a broad plateau of near-optimal clearance.
+//! A cell leaves the queue only once its bound proves it cannot reach the
+//! incumbent, so a cell that could reach within a few percent must be refined a
+//! long way first. On the vendored 290-parcel corpus that is the dominant cost,
+//! and it follows from the Lipschitz bound rather than from this loop.
 use std::collections::BinaryHeap;
 
 use super::super::index::{NearestBoundaryIndex, PipIndex};
@@ -169,7 +175,7 @@ pub fn solve_grid(
         }
 
         // The heap is ordered by the bound, so once the best remaining cell
-        // cannot beat the incumbent by more than the tolerance, no cell can.
+        // cannot beat the incumbent by more than the prune gap, no cell can.
         // With no incumbent yet there is nothing to compare against, so the
         // search continues and the first interior centre becomes the incumbent.
         let radius_bound = best_dist + tolerance;
