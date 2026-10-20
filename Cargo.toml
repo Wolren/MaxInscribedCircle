@@ -61,3 +61,7 @@ required-features = ["bench-geos"]
 [[example]]
 name = "parity_geos"
 required-features = ["bench-geos"]
+
+[[example]]
+name = "compare_apples"
+required-features = ["bench-geos"]

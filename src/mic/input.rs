@@ -175,7 +175,7 @@ pub struct SegmentIndex {
     /// Segment direction y, computed as by - ay.
     pub dir_y: Vec<f64>,
     /// Squared segment length, dir_x * dir_x + dir_y * dir_y.
-    pub len_sq: Vec<f64>,
+    pub inv_len_sq: Vec<f64>,
 }
 
 impl SegmentIndex {
@@ -218,7 +218,7 @@ impl SegmentIndex {
             bbox_maxy: Vec::with_capacity(len),
             dir_x: Vec::with_capacity(len),
             dir_y: Vec::with_capacity(len),
-            len_sq: Vec::with_capacity(len),
+            inv_len_sq: Vec::with_capacity(len),
         };
 
         for (rid, meta) in host.rings.iter().enumerate() {
@@ -248,7 +248,7 @@ impl SegmentIndex {
                 index.bbox_maxy.push(a[1].max(b[1]));
                 index.dir_x.push(dx);
                 index.dir_y.push(dy);
-                index.len_sq.push(len_sq);
+                index.inv_len_sq.push(1.0 / len_sq);
             }
         }
 
@@ -280,9 +280,9 @@ impl SegmentIndex {
         let ay = self.ay[seg_idx];
         let dx = self.dir_x[seg_idx];
         let dy = self.dir_y[seg_idx];
-        let len_sq = self.len_sq[seg_idx];
+        let inv_len_sq = self.inv_len_sq[seg_idx];
 
-        let t = (((x - ax) * dx + (y - ay) * dy) / len_sq).clamp(0.0, 1.0);
+        let t = (((x - ax) * dx + (y - ay) * dy) * inv_len_sq).clamp(0.0, 1.0);
         let px = ax + t * dx;
         let py = ay + t * dy;
         let ex = x - px;
@@ -324,13 +324,13 @@ impl SegmentIndex {
                 self.dir_y[i + 3],
             ]);
             let ls = f64x4::from([
-                self.len_sq[i],
-                self.len_sq[i + 1],
-                self.len_sq[i + 2],
-                self.len_sq[i + 3],
+                self.inv_len_sq[i],
+                self.inv_len_sq[i + 1],
+                self.inv_len_sq[i + 2],
+                self.inv_len_sq[i + 3],
             ]);
 
-            let t = ((x - ax) * dx + (y - ay) * dy) / ls;
+            let t = ((x - ax) * dx + (y - ay) * dy) * ls;
             let t = t.max(f64x4::ZERO).min(f64x4::ONE);
             let pdx = ax + t * dx;
             let pdy = ay + t * dy;
@@ -400,13 +400,13 @@ impl SegmentIndex {
                 self.dir_y[i + 3],
             ]);
             let ls = f64x4::from([
-                self.len_sq[i],
-                self.len_sq[i + 1],
-                self.len_sq[i + 2],
-                self.len_sq[i + 3],
+                self.inv_len_sq[i],
+                self.inv_len_sq[i + 1],
+                self.inv_len_sq[i + 2],
+                self.inv_len_sq[i + 3],
             ]);
 
-            let t = ((x - ax) * dx + (y - ay) * dy) / ls;
+            let t = ((x - ax) * dx + (y - ay) * dy) * ls;
             let t = t.max(f64x4::ZERO).min(f64x4::ONE);
             let pdx = ax + t * dx;
             let pdy = ay + t * dy;
