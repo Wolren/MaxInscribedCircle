@@ -78,6 +78,57 @@ cell-refinement branch and bound as the grid stage, so a close match means two
 implementations of one algorithm agree, not that an independent method
 confirms the radius. The independent evidence is the two invariants above.
 
+## Performance
+
+### Against GEOS, same polygon and same tolerance
+
+290 Polish cadastral parcels (BDOT10k, TERYT 2261) vendored in
+`benches/data/realworld_290.geojson`. Both solvers get the same polygon at the
+same tolerance (`diag * 1e-7`) and only the solve is timed: our indexes and the
+GEOS geometry are built before the clock starts, and neither side includes
+coordinate conversion or output parsing. Best of 5 per case.
+
+Ratio is GEOS / native, so above 1 means we win.
+
+| Measure | native | GEOS | Ratio |
+|----------|-------:|-----:|------:|
+| total, 290 parcels | **64.7 ms** | 712.8 ms | **11.0x** |
+| per-case median | | | 6.8x |
+| per-case p10 | | | 2.3x |
+| per-case p90 | | | 16.9x |
+| native faster on | 280/290 | | 97% |
+
+The win collapses as vertex count grows, which is the honest shape of it:
+
+| Exterior vertices | n | native | GEOS | Ratio |
+|------------------:|--:|-------:|-----:|------:|
+| 0-7 | 42 | 3.05 ms | 55.9 ms | 18.4x |
+| 8-16 | 111 | 25.3 ms | 436 ms | 17.2x |
+| 17-32 | 75 | 14.2 ms | 144 ms | 10.2x |
+| 33-64 | 28 | 6.19 ms | 23.9 ms | 3.86x |
+| 65-128 | 20 | 6.41 ms | 31.0 ms | 4.84x |
+| 129+ | 14 | 9.54 ms | 22.5 ms | 2.36x |
+
+Cadastral parcels are mostly 8 to 33 vertices, which is where the 11x comes
+from. On dense polygons GEOS nearly catches us. The ten cases we lose are all
+4-vertex parcels at 0.53x to 0.67x, where both solvers take 1 to 2 us and GEOS
+wins on constant overhead alone.
+
+Radii agree closely: median 6.1e-8, p90 2.3e-7, max 4.7e-7 relative.
+
+Regenerate with `cargo run --release --features bench-geos --example compare_apples`,
+which needs `GEOS_LIB_DIR`, `GEOS_VERSION` and GEOS on `PATH`.
+
+### Corpus invariants
+
+`cargo run --release --example real_corpus` reports the shape distribution and
+per-bucket cost; `cargo run --release --example real_accuracy` re-measures every
+answer against the segment table and against a 220x220 interior scan. Last run:
+0 radii above their own measured clearance, 0 shortfall against the scan.
+
+The `simd` feature is not covered by the corpus examples, so a change that
+touches the batch path needs `cargo test --features simd` as well.
+
 ## API
 
 | Function | Use |
