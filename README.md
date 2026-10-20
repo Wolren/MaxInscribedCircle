@@ -92,29 +92,32 @@ Ratio is GEOS / native, so above 1 means we win.
 
 | Measure | native | GEOS | Ratio |
 |----------|-------:|-----:|------:|
-| total, 290 parcels | **64.7 ms** | 712.8 ms | **11.0x** |
-| per-case median | | | 6.8x |
-| per-case p10 | | | 2.3x |
-| per-case p90 | | | 16.9x |
+| total, 290 parcels | **42.3 ms** | 361.8 ms | **8.56x** |
+| per-case median | | | 6.6x |
+| per-case p10 | | | 2.1x |
+| per-case p90 | | | 14.1x |
 | native faster on | 280/290 | | 97% |
 
 The win collapses as vertex count grows, which is the honest shape of it:
 
 | Exterior vertices | n | native | GEOS | Ratio |
 |------------------:|--:|-------:|-----:|------:|
-| 0-7 | 42 | 3.05 ms | 55.9 ms | 18.4x |
-| 8-16 | 111 | 25.3 ms | 436 ms | 17.2x |
-| 17-32 | 75 | 14.2 ms | 144 ms | 10.2x |
-| 33-64 | 28 | 6.19 ms | 23.9 ms | 3.86x |
-| 65-128 | 20 | 6.41 ms | 31.0 ms | 4.84x |
-| 129+ | 14 | 9.54 ms | 22.5 ms | 2.36x |
+| 0-7 | 42 | 1.96 ms | 30.6 ms | 15.6x |
+| 8-16 | 111 | 16.4 ms | 215 ms | 13.2x |
+| 17-32 | 75 | 8.84 ms | 73.9 ms | 8.35x |
+| 33-64 | 28 | 3.94 ms | 12.9 ms | 3.27x |
+| 65-128 | 20 | 4.25 ms | 16.3 ms | 3.83x |
+| 129+ | 14 | 6.94 ms | 12.8 ms | 1.84x |
 
-Cadastral parcels are mostly 8 to 33 vertices, which is where the 11x comes
-from. On dense polygons GEOS nearly catches us. The ten cases we lose are all
-4-vertex parcels at 0.53x to 0.67x, where both solvers take 1 to 2 us and GEOS
-wins on constant overhead alone.
+Cadastral parcels are mostly 8 to 33 vertices, which is where the 8.56x comes
+from. On dense polygons GEOS nearly catches us: at 129+ vertices we are 1.84x
+ahead. The ten cases we lose are all 4-vertex parcels at 0.62x to 0.71x, where
+both solvers take under 1 us and GEOS wins on constant overhead alone.
 
-Radii agree closely: median 6.1e-8, p90 2.3e-7, max 4.7e-7 relative.
+Both sides run serially on one thread: the batch entry point is not used here.
+Pinned to a single core with CPU affinity the ratio holds at 7.9x, while the
+rayon batch over the same parcels drops from 6.1x to 1.0x, so the margin comes
+from the solver and not from concurrency.
 
 Regenerate with `cargo run --release --features bench-geos --example compare_apples`,
 which needs `GEOS_LIB_DIR`, `GEOS_VERSION` and GEOS on `PATH`.
