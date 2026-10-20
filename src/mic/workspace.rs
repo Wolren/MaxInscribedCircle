@@ -4,13 +4,6 @@ use super::index::{NearestBoundaryIndex, PipIndex};
 use super::input::{HostPolygon, SegmentIndex};
 use super::MicError;
 
-#[derive(Debug, Clone)]
-pub(crate) struct MicCandidate {
-    pub x: f64,
-    pub y: f64,
-    pub radius_sq: f64,
-}
-
 /// Reusable solver workspace for MIC computation.
 #[derive(Debug, Clone)]
 pub struct MicWorkspace {
@@ -20,7 +13,6 @@ pub struct MicWorkspace {
     pub pip_index: PipIndex,
     /// Nearest-boundary distance index over the host segments.
     pub nb_index: NearestBoundaryIndex,
-    pub(crate) candidate_buf: Vec<MicCandidate>,
 }
 
 impl MicWorkspace {
@@ -38,11 +30,6 @@ impl MicWorkspace {
             host,
             pip_index,
             nb_index,
-            candidate_buf: Vec::new(),
         })
-    }
-
-    pub(crate) fn clear_candidates(&mut self) {
-        self.candidate_buf.clear();
     }
 }

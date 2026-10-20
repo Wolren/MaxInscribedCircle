@@ -7,7 +7,6 @@
 
 use super::mic::{
     maximum_inscribed_circle, maximum_inscribed_circle_multipolygon, MicOptions, MicUsedEngine,
-    RobustMode,
 };
 use geo_types::{Coord, LineString, Polygon};
 use libc::{c_double, c_int, size_t};
@@ -34,26 +33,22 @@ pub struct MicResultC {
     pub radius: c_double,
     /// Squared radius, radius * radius.
     pub radius_sq: c_double,
-    /// 0 = exact, 1 = grid, 2 = GEOS comparison solve.
+    /// 0 = grid, 2 = GEOS comparison solve.
     pub used_engine: c_int,
-    /// Number of candidate centers evaluated during the solve.
+    /// Number of cells the grid search popped.
     pub candidate_count: size_t,
     /// -1 when not a multipolygon solve.
     pub component_index: c_int,
 }
 
 /// MIC options.
+///
+/// Reserved: the solve has no tunables, so this struct carries no fields today.
+/// It is kept so the C ABI has a stable options pointer to pass.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct MicOptionsC {
-    /// 0 = FastF64, 1 = Filtered.
-    pub robust_mode: c_int,
-}
-
-impl Default for MicOptionsC {
-    fn default() -> Self {
-        Self { robust_mode: 1 }
-    }
+    _reserved: c_int,
 }
 
 /// One multipolygon component: exterior + holes.
@@ -128,16 +123,8 @@ pub fn guard(f: impl FnOnce() -> c_int + std::panic::UnwindSafe) -> c_int {
     std::panic::catch_unwind(f).unwrap_or(-1)
 }
 
-fn robust_from(v: c_int) -> RobustMode {
-    match v {
-        0 => RobustMode::FastF64,
-        _ => RobustMode::Filtered,
-    }
-}
-
 fn engine_to(v: MicUsedEngine) -> c_int {
     match v {
-        MicUsedEngine::Exact => 0,
         MicUsedEngine::Grid => 1,
         MicUsedEngine::Geos => 2,
     }
@@ -161,10 +148,8 @@ fn fill(r: &super::mic::MicResult, out: *mut MicResultC) -> c_int {
     0
 }
 
-fn opts_from(raw: MicOptionsC) -> MicOptions {
-    MicOptions {
-        robust_mode: robust_from(raw.robust_mode),
-    }
+fn opts_from(_raw: MicOptionsC) -> MicOptions {
+    MicOptions::default()
 }
 
 /// Solve MIC. Holes optional (null = none).

@@ -9,7 +9,6 @@ use geo_types::{Coord, LineString, Polygon};
 
 use max_inscribed_circle::mic::grid_tolerance;
 use max_inscribed_circle::mic::input::HostPolygon;
-use max_inscribed_circle::mic::solver::exact::solve_exact;
 use max_inscribed_circle::mic::solver::grid::solve_grid;
 use max_inscribed_circle::mic::workspace::MicWorkspace;
 use max_inscribed_circle::mic::{
@@ -104,16 +103,8 @@ fn main() {
 
     println!("cores {threads}   tolerance = 1e-7 of the bounding box diagonal\n");
     println!(
-        "{:<18} {:>11} {:>9} {:>9} {:>9} {:>10} {:>10} {:>11} {:>9}",
-        "shape",
-        "radius",
-        "ws ms",
-        "grid ms",
-        "exact ms",
-        "full ms",
-        "cells grid",
-        "cells full",
-        "tol"
+        "{:<18} {:>11} {:>9} {:>9} {:>9} {:>10} {:>11} {:>9}",
+        "shape", "radius", "ws ms", "grid ms", "full ms", "cells grid", "cells full", "tol"
     );
 
     for (name, p) in &shapes {
@@ -121,7 +112,7 @@ fn main() {
         let tol = grid_tolerance(&host);
 
         let t = Instant::now();
-        let mut ws = MicWorkspace::new(host.clone()).expect("workspace");
+        let ws = MicWorkspace::new(host.clone()).expect("workspace");
         let ws_ms = ms(t);
 
         let t = Instant::now();
@@ -129,32 +120,19 @@ fn main() {
         let grid_ms = ms(t);
 
         let t = Instant::now();
-        let exact = solve_exact(&mut ws, &opts);
-        let exact_ms = ms(t);
-
-        let t = Instant::now();
         let full = maximum_inscribed_circle(p, &opts).expect("full");
         let full_ms = ms(t);
 
         let grid_radius = grid.as_ref().map(|r| r.radius).unwrap_or(f64::NAN);
-        let exact_radius = exact.as_ref().map(|r| r.radius).unwrap_or(f64::NAN);
         let cells_grid = grid.as_ref().map(|r| r.candidate_count).unwrap_or(0);
 
         println!(
-            "{:<18} {:>11.7} {:>9.2} {:>9.2} {:>9.2} {:>10.2} {:>10} {:>11} {:>9.1e}",
-            name,
-            full.radius,
-            ws_ms,
-            grid_ms,
-            exact_ms,
-            full_ms,
-            cells_grid,
-            full.candidate_count,
-            tol
+            "{:<18} {:>11.7} {:>9.2} {:>9.2} {:>10.2} {:>10} {:>11} {:>9.1e}",
+            name, full.radius, ws_ms, grid_ms, full_ms, cells_grid, full.candidate_count, tol
         );
         println!(
-            "{:<18} {:>11} {:>11.7} {:>11.7}  grid radius | exact radius | full radius {:?}/{:?}",
-            "", "", grid_radius, exact_radius, full.used_engine, full.approach
+            "{:<18} {:>11} {:>11.7}  grid radius | full radius {:?}/{:?}",
+            "", "", grid_radius, full.used_engine, full.approach
         );
     }
 
@@ -212,16 +190,8 @@ fn main() {
 
     println!("\n=== vertex count sweep, regular n-gons of radius 10 ===");
     println!(
-        "{:>6} {:>12} {:>11} {:>10} {:>11} {:>10} {:>10} {:>11} {:>9}",
-        "verts",
-        "true radius",
-        "ws ms",
-        "exact ms",
-        "exact rel",
-        "grid ms",
-        "grid cells",
-        "full ms",
-        "engine"
+        "{:>6} {:>12} {:>11} {:>11} {:>10} {:>10} {:>11} {:>9}",
+        "verts", "true radius", "ws ms", "grid rel", "grid ms", "grid cells", "full ms", "engine"
     );
     for n in [4usize, 8, 16, 32, 64, 128, 256, 512, 1024] {
         let p = regular(n, 10.0);
@@ -229,12 +199,8 @@ fn main() {
         let tol = grid_tolerance(&host);
 
         let t = Instant::now();
-        let mut ws = MicWorkspace::new(host.clone()).expect("workspace");
+        let ws = MicWorkspace::new(host.clone()).expect("workspace");
         let ws_ms = ms(t);
-
-        let t = Instant::now();
-        let ex = solve_exact(&mut ws, &opts).ok();
-        let exact_ms = ms(t);
 
         let t = Instant::now();
         let gr = solve_grid(&host, &ws.pip_index, &ws.nb_index, tol);
@@ -245,17 +211,16 @@ fn main() {
         let full_ms = ms(t);
 
         let truth = 10.0 * (std::f64::consts::PI / n as f64).cos();
-        let exact_rel = ex
+        let grid_rel = gr
             .as_ref()
             .map(|r| (r.radius - truth) / truth)
             .unwrap_or(f64::NAN);
         println!(
-            "{:>6} {:>12.9} {:>11.2} {:>10.2} {:>11.2e} {:>10.2} {:>10} {:>11.2} {:>9?}",
+            "{:>6} {:>12.9} {:>11.2} {:>11.2e} {:>10.2} {:>10} {:>11.2} {:>9?}",
             n,
             truth,
             ws_ms,
-            exact_ms,
-            exact_rel,
+            grid_rel,
             grid_ms,
             gr.as_ref().map(|r| r.candidate_count).unwrap_or(0),
             full_ms,

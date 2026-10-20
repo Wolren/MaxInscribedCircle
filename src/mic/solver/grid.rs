@@ -213,10 +213,18 @@ pub fn solve_grid(
     // distance to the nearest segment of this polygon at this centre. Without
     // an incumbent there is no centre to measure, and the seeds covered the
     // box, so the only way to get here is a polygon with no interior point at
-    // all, which the exact stage reports on.
+    // all, which the caller reports as an error.
     if !found {
         return None;
     }
+
+    // Polish the incumbent. A ridge of equal clearance outruns the cell budget
+    // before the bisection closes on the peak, so the answer can sit a percent
+    // short on a long thin shape. Hill climbing on the clearance field fixes
+    // that in a few dozen probes, and it only ever accepts a centre that is
+    // strictly better and strictly inside.
+    let (best_x, best_y, _polished) = polish(nb, pip, best_x, best_y, best_dist, tolerance, h_size);
+
     let segments = nb.segments();
     let radius_sq = segments.batch_point_segment_distance_sq(best_x, best_y, 0, segments.len());
     if !radius_sq.is_finite() {
@@ -238,6 +246,65 @@ pub fn solve_grid(
         approach: MicApproach::GridSolver,
         component_index: None,
     })
+}
+
+/// Climb the clearance field from an incumbent centre until no probe improves.
+///
+/// Each round probes the eight compass directions at a shrinking radius, and
+/// accepts a probe only when it is strictly inside the polygon and strictly
+/// better. The radius halves whenever a round finds nothing, so the walk stops
+/// once the step falls under `tol`. Returns the best centre found and its
+/// clearance, never worse than the input.
+fn polish(
+    nb: &NearestBoundaryIndex,
+    pip: &PipIndex,
+    start_x: f64,
+    start_y: f64,
+    start_d: f64,
+    tol: f64,
+    initial_step: f64,
+) -> (f64, f64, f64) {
+    let mut best_x = start_x;
+    let mut best_y = start_y;
+    let mut best_d = start_d;
+    let mut step = initial_step;
+
+    // A ridge peak sits where two supports balance, so a compass walk reaches
+    // it in a handful of rounds; the cap only guards against a pathological
+    // field that keeps improving by a vanishing amount.
+    for _ in 0..256 {
+        if step <= tol || !step.is_finite() {
+            break;
+        }
+        let mut moved = false;
+        for (dx, dy) in [
+            (-1.0, 0.0),
+            (1.0, 0.0),
+            (0.0, -1.0),
+            (0.0, 1.0),
+            (-1.0, -1.0),
+            (1.0, -1.0),
+            (-1.0, 1.0),
+            (1.0, 1.0),
+        ] {
+            let nx = best_x + dx * step;
+            let ny = best_y + dy * step;
+            let Some((d_sq, _)) = nb.nearest_distance_sq(nx, ny) else {
+                continue;
+            };
+            let d = d_sq.max(0.0).sqrt();
+            if d > best_d && pip.contains_strict_xy(nx, ny) {
+                best_x = nx;
+                best_y = ny;
+                best_d = d;
+                moved = true;
+            }
+        }
+        if !moved {
+            step *= 0.5;
+        }
+    }
+    (best_x, best_y, best_d)
 }
 
 #[cfg_attr(feature = "hotpath", hotpath::measure)]

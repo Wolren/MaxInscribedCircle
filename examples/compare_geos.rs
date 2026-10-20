@@ -22,7 +22,7 @@ use geo_types::{Coord, LineString, Polygon};
 use max_inscribed_circle::mic::input::HostPolygon;
 use max_inscribed_circle::mic::solver::bench_geos::{geos_tolerance_for, solve_mic_geos};
 use max_inscribed_circle::mic::{
-    maximum_inscribed_circle, MicApproach, MicOptions, MicResult, MicUsedEngine, RobustMode,
+    maximum_inscribed_circle, MicApproach, MicOptions, MicResult, MicUsedEngine,
 };
 
 const NATIVE_REPEATS: u32 = 200;
@@ -110,7 +110,6 @@ fn sliver() -> Polygon<f64> {
 
 fn engine_name(engine: MicUsedEngine) -> &'static str {
     match engine {
-        MicUsedEngine::Exact => "exact",
         MicUsedEngine::Grid => "grid",
         MicUsedEngine::Geos => "geos",
     }
@@ -123,7 +122,6 @@ fn approach_name(approach: MicApproach) -> &'static str {
         MicApproach::FastConvexQuad => "FastConvexQuad",
         MicApproach::FastConvexN => "FastConvexN",
         MicApproach::GridSolver => "GridSolver",
-        MicApproach::VoronoiExact => "VoronoiExact",
         MicApproach::Geos => "Geos",
     }
 }
@@ -138,7 +136,6 @@ fn label(r: &MicResult) -> String {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = MicOptions::default();
-    let robust = RobustMode::Filtered;
 
     let shapes: Vec<(&str, Polygon<f64>)> = vec![
         ("square 10", square(10.0)),
@@ -162,14 +159,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (name, poly) in &shapes {
         let host = HostPolygon::from_polygon(poly)?;
-        let tolerance = geos_tolerance_for(&host, robust);
+        let tolerance = geos_tolerance_for(&host);
 
         let native = maximum_inscribed_circle(poly, &options)?;
-        let geos_result = solve_mic_geos(poly, robust)?;
+        let geos_result = solve_mic_geos(poly)?;
 
         // Warm both paths before timing, so neither pays a first-call cost.
         let _ = maximum_inscribed_circle(poly, &options)?;
-        let _ = solve_mic_geos(poly, robust)?;
+        let _ = solve_mic_geos(poly)?;
 
         let native_start = Instant::now();
         for _ in 0..NATIVE_REPEATS {
@@ -179,7 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let geos_start = Instant::now();
         for _ in 0..GEOS_REPEATS {
-            let _ = solve_mic_geos(poly, robust)?;
+            let _ = solve_mic_geos(poly)?;
         }
         let geos_us = geos_start.elapsed().as_secs_f64() * 1e6 / f64::from(GEOS_REPEATS);
 

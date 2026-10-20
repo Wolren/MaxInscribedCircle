@@ -23,21 +23,22 @@
 //!
 //! # Solve pipeline
 //!
-//! Three stages, all native Rust. [`MicResult::used_engine`] reports which one
-//! produced the answer:
+//! Two stages, both native Rust. [`MicResult::used_engine`] and
+//! [`MicResult::approach`] report which one produced the answer:
 //!
-//! 1. **Analytical fast paths** for single-ring inputs of four or five
-//!    vertices: triangle incenter, then rectangle, then a convex quad solve.
-//!    The convex quad result is checked against true edge distances and
-//!    discarded when it is more than 1% off.
-//! 2. **Grid search** over the bounding box, with a tolerance derived from the
-//!    diagonal (`max(diag * 1e-7, 1e-12)`). It returns early when it finds a
-//!    candidate, which is the usual outcome for complex shapes.
-//! 3. **Exact Voronoi solve** over candidate sites, reached when the grid stage
-//!    finds nothing.
+//! 1. **Closed-form fast paths** for single-ring inputs of four or five
+//!    vertices: triangle incenter, axis-aligned rectangle, then a convex-quad
+//!    Chebyshev solve. Every result is re-measured against the segment table
+//!    and falls through to the grid when the ring is not the class it claimed.
+//! 2. **Grid search** over the bounding box, a branch and bound driven by the
+//!    1-Lipschitz property of boundary distance, refining to a tolerance of
+//!    `diag * 1e-7`, then a compass hill climb on the clearance field.
 //!
-//! A degenerate input, such as a zero-area ring, fails fast with
-//! [`MicError::InvalidInput`] instead of returning a meaningless circle.
+//! The radius a result reports is always the measured distance from its centre
+//! to the nearest boundary segment, so a returned circle fits the polygon. A
+//! degenerate input, such as a zero-area ring or a non-finite coordinate, fails
+//! fast with [`MicError::InvalidInput`] instead of returning a meaningless
+//! circle.
 //!
 //! # Entry points
 //!
@@ -52,7 +53,7 @@
 //!
 //! The `bench-geos` feature compiles `mic::solver::bench_geos`, which calls
 //! the GEOS `MaximumInscribedCircle` construct so benchmarks can cross-check
-//! the native solvers. It is not an engine: nothing in [`mic`] calls it, and
+//! the native solver. It is not an engine: nothing in [`mic`] calls it, and
 //! the default feature set does not compile it. GEOS runs the same
 //! cell-refinement branch and bound as the grid stage, so agreement between
 //! them means two implementations of one algorithm match, not that an
@@ -104,7 +105,7 @@ pub use mic::workspace::MicWorkspace;
 pub use mic::{
     maximum_inscribed_circle, maximum_inscribed_circle_multipolygon,
     maximum_inscribed_circle_slice, maximum_inscribed_circle_with_workspace, MicApproach, MicError,
-    MicOptions, MicResult, MicUsedEngine, RobustMode,
+    MicOptions, MicResult, MicUsedEngine,
 };
 
 #[cfg(feature = "python")]

@@ -1,9 +1,9 @@
 //! Maximum Inscribed Circle (MIC) solvers for polygonal inputs.
 //!
-//! One pipeline: analytical fast paths, then the grid search, then the exact
-//! candidate enumeration. There is no external solver in the pipeline; the
-//! GEOS comparison lives behind the `bench-geos` feature in
-//! `solver::bench_geos` and is never called from here.
+//! One pipeline: closed-form fast paths for the shape classes where the
+//! optimum is known, then the grid solver for everything else. There is no
+//! external solver in the pipeline; the GEOS comparison lives behind the
+//! `bench-geos` feature in `solver::bench_geos` and is never called from here.
 
 pub mod index;
 pub mod input;
@@ -16,39 +16,20 @@ use rayon::prelude::*;
 use thiserror::Error;
 
 use self::input::HostPolygon;
-use self::solver::exact::solve_exact;
 use self::solver::grid::solve_grid;
 use self::workspace::MicWorkspace;
 
-/// Numeric robustness mode for the exact engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RobustMode {
-    /// Fast finite-precision mode.
-    FastF64,
-    /// Extra candidate filtering and certification.
-    Filtered,
-}
-
 /// Solver configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MicOptions {
-    /// Robustness mode: Filtered adds candidate filtering to the exact solver.
-    pub robust_mode: RobustMode,
-}
-
-impl Default for MicOptions {
-    fn default() -> Self {
-        Self {
-            robust_mode: RobustMode::Filtered,
-        }
-    }
-}
+///
+/// The solve has no tunable knobs: the grid tolerance scales with the input
+/// diagonal and the fast paths are closed form. The type is kept so callers
+/// pass options by reference and future knobs stay source compatible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MicOptions {}
 
 /// Solver that produced the final result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MicUsedEngine {
-    /// The native exact solver produced the circle.
-    Exact,
     /// The grid solver produced the circle.
     Grid,
     /// The GEOS comparison solver produced the circle, behind `bench-geos`.
@@ -68,8 +49,6 @@ pub enum MicApproach {
     FastConvexN,
     /// Uniform grid search over interior cell centers.
     GridSolver,
-    /// Exact candidate enumeration over segment and vertex Voronoi sites.
-    VoronoiExact,
     /// GEOS maximum inscribed circle, behind the `bench-geos` feature.
     Geos,
 }
@@ -101,12 +80,9 @@ pub enum MicError {
     /// Input polygon is malformed, empty, or degenerate.
     #[error("invalid polygon input: {0}")]
     InvalidInput(String),
-    /// No valid candidate center was found.
+    /// No interior point was found, so no circle exists.
     #[error("no valid MIC candidate found")]
     NoCircleFound,
-    /// The exact solver failed.
-    #[error("exact MIC solver failed: {0}")]
-    ExactFailed(String),
     /// The GEOS comparison solve failed, behind the `bench-geos` feature.
     #[error("GEOS comparison solve failed: {0}")]
     GeosFailed(String),
@@ -125,16 +101,21 @@ pub fn maximum_inscribed_circle(
     solve_on_host_polygon(&host, opts)
 }
 
-/// Solve MIC with a reusable workspace (avoids rebuilding indexes per call).
+/// Solve MIC reusing a workspace, which holds the indexes built for its polygon.
 ///
-/// The workspace is rebuilt only if `host` changes; for repeated calls on
-/// different polygons, create a fresh [`MicWorkspace`] each time.
+/// The workspace owns the polygon it was built for, so this solves that
+/// polygon. Build a fresh [`MicWorkspace`] to solve a different one.
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
 pub fn maximum_inscribed_circle_with_workspace(
     workspace: &mut MicWorkspace,
     opts: &MicOptions,
 ) -> Result<MicResult, MicError> {
-    solve_exact(workspace, opts).map_err(|err| MicError::ExactFailed(err.to_string()))
+    solve_with_indexes(
+        &workspace.host,
+        &workspace.pip_index,
+        &workspace.nb_index,
+        opts,
+    )
 }
 
 /// Solve MIC on a multipolygon by solving each component and keeping the best.
@@ -188,7 +169,7 @@ pub fn maximum_inscribed_circle_slice(
         .collect()
 }
 
-fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicResult, MicError> {
+fn solve_on_host_polygon(host: &HostPolygon, _opts: &MicOptions) -> Result<MicResult, MicError> {
     // Phase 0: Try analytical fast path for simple shapes (triangle, rectangle, convex quad).
     // We intentionally do NOT dispatch arbitrary N-gons to fast_convex_n here:
     // real-world data has near-collinear reflex vertices and numerical noise that
@@ -197,10 +178,10 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
         let outer_len = host.outer_ring().len();
         let result = if outer_len == 4 {
             // Triangle - exact incenter formula
-            solver::exact::fast_triangle(host)
+            solver::fast::fast_triangle(host)
         } else if outer_len == 5 {
             // Rectangle (cheapest O(1)), then general convex quad (LP solver)
-            solver::exact::fast_rectangle(host).or_else(|| solver::exact::fast_convex_quad(host))
+            solver::fast::fast_rectangle(host).or_else(|| solver::fast::fast_convex_quad(host))
         } else {
             None
         };
@@ -234,8 +215,8 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
         }
     }
 
-    // Phase 1: grid search over the bounding box. It answers most complex
-    // shapes and returns before the exact stage runs.
+    // Phase 1: grid search over the bounding box, which answers every shape
+    // the fast paths did not claim.
     let workspace = MicWorkspace::new(host.clone())?;
     let tolerance = grid_tolerance(host);
 
@@ -245,8 +226,21 @@ fn solve_on_host_polygon(host: &HostPolygon, opts: &MicOptions) -> Result<MicRes
         return Ok(grid_result);
     }
 
-    // Phase 2: exact candidate enumeration over Voronoi sites.
-    run_exact(host, opts)
+    // The seeds cover the whole box, so reaching here means the polygon has no
+    // interior point at all, which a zero-area ring catches earlier. Report it
+    // rather than return a circle the input does not contain.
+    Err(MicError::NoCircleFound)
+}
+
+/// Solve with indexes the caller already built, skipping index construction.
+fn solve_with_indexes(
+    host: &HostPolygon,
+    pip: &index::PipIndex,
+    nb: &index::NearestBoundaryIndex,
+    _opts: &MicOptions,
+) -> Result<MicResult, MicError> {
+    let tolerance = grid_tolerance(host);
+    solve_grid(host, pip, nb, tolerance).ok_or(MicError::NoCircleFound)
 }
 
 /// Absolute refinement tolerance for the grid stage on a host polygon:
@@ -269,11 +263,6 @@ pub fn grid_tolerance(host: &HostPolygon) -> f64 {
     diag * 1e-7
 }
 
-fn run_exact(host: &HostPolygon, opts: &MicOptions) -> Result<MicResult, MicError> {
-    let mut workspace = MicWorkspace::new(host.clone())?;
-    solve_exact(&mut workspace, opts).map_err(|err| MicError::ExactFailed(err.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,12 +279,6 @@ mod tests {
             ]),
             vec![],
         )
-    }
-
-    #[test]
-    fn mic_default_options() {
-        let opts = MicOptions::default();
-        assert_eq!(opts.robust_mode, RobustMode::Filtered);
     }
 
     #[test]

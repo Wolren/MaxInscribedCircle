@@ -32,20 +32,19 @@ and needs no system dependency.
 
 ## How it solves
 
-Three stages, all native Rust. `MicResult::used_engine` and
+Two stages, both native Rust. `MicResult::used_engine` and
 `MicResult::approach` report which one answered.
 
-1. **Analytical fast paths** for single-ring inputs of four or five vertices:
-   triangle incenter, then axis-aligned rectangle, then a convex-quad
-   Chebyshev solve. Every fast-path radius is re-measured against the segment
-   table before it returns, and a result that disagrees by more than 1e-9
-   relative falls through to the next stage.
-2. **Grid solver**: branch and bound over the bounding box, ordered by an
-   upper bound from the 1-Lipschitz property of boundary distance. It answers
-   most complex shapes.
-3. **Candidate solver**: enumeration over boundary vertices, segment triples,
-   ear circumcenters, constrained-Delaunay circumcenters and Voronoi sites,
-   then a tiled branch-and-bound refinement.
+1. **Closed-form fast paths** for single-ring inputs of four or five vertices:
+   triangle incenter, axis-aligned rectangle, then a convex-quad Chebyshev
+   solve. Every fast-path radius is re-measured against the segment table
+   before it returns, and a result that disagrees by more than 1e-9 relative
+   falls through to the grid instead of being trusted.
+2. **Grid solver**: branch and bound over the bounding box, ordered by an upper
+   bound from the 1-Lipschitz property of boundary distance, refining to a
+   tolerance of `diag * 1e-7`. A compass hill climb on the clearance field
+   polishes the incumbent, which is what keeps long thin shapes accurate when
+   the cell budget would otherwise stop the bisection a percent short.
 
 The returned radius is always the true distance from the returned centre to
 the nearest boundary segment, measured at the end of the solve. A circle this
@@ -66,7 +65,7 @@ A third harness, `examples/parity_geos.rs`, cross-checks against GEOS
 synthetic shapes). Last run on this tree:
 
 ```
-relative gap vs GEOS     max 5.814e-5   p90 2.390e-7   median 2.377e-8
+relative gap vs GEOS     max 1.502e-4   p90 2.233e-7   median 2.352e-8
 radius above true clearance           native 0   GEOS 0
 returned centre outside the polygon   native 0   GEOS 0
 sampled floor above a returned radius native 0   GEOS 0
@@ -89,8 +88,8 @@ confirms the radius. The independent evidence is the two invariants above.
 | `maximum_inscribed_circle_with_workspace` | reuse a `MicWorkspace` across calls |
 
 `MicResult` carries the centre, the radius and its square, the indices of the
-supporting segments, the candidate count, the solver and approach that
-answered, and the component index for multipolygon solves.
+supporting segments, the cell count the search popped, the solver and approach
+that answered, and the component index for multipolygon solves.
 
 ## Features
 
@@ -141,13 +140,14 @@ are caught at the boundary and become `-1`. The `python` feature exposes
 - Coordinates must be finite. A NaN or infinite coordinate is rejected with
   `MicError::InvalidInput` instead of returning a meaningless circle.
 - A degenerate ring, such as zero area, is rejected the same way.
-- The grid stage abandons shapes whose optimum is a long ridge once it has
-  spent its cell budget, and hands them to the candidate stage. Accuracy is
-  unaffected because every answer is measured at the end, but such a shape
-  costs more than a compact one of the same vertex count.
-- The candidate stage alone can come back short of the true MIC on a shape
-  whose optimum sits in a narrow basin. The pipeline is not affected, because
-  the grid stage answers those shapes first.
+- The search is bounded: a shape whose optimum is a long ridge can spend its
+  whole cell budget before the bisection closes, and the hill climb then
+  finishes the job. Such a shape costs more than a compact one of the same
+  vertex count. Accuracy stays within the tolerance above; on the GEOS corpus
+  the worst case is 1.5e-4 relative.
+- Accuracy is relative to the size of the polygon, not absolute. A polygon
+  stored in degrees refines to a tolerance in degrees, so the same shape in
+  metres and in degrees converges to the same circle.
 
 ## Examples
 
